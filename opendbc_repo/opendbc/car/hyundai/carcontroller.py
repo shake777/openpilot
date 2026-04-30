@@ -137,10 +137,24 @@ class CarController(CarControllerBase):
     self.button_spam2 = 30
     self.button_spam3 = 1
 
-    self.apply_angle_last = 0
-    self.lkas_max_torque = 0
-    self.angle_max_torque = 250
+    self.apply_angle_last = 0.0
+    self.lkas_max_torque = 0.0
+    self.angle_max_torque = self.params.ANGLE_MAX_TORQUE
     self.steer_pressed_timer = 0
+
+    # angle_control 전용 상태 변수
+    self.prev_angle_error = 0.0
+    self.prev_eps_out_torque = 0.0
+    self.angle_reversal_timer = 0
+    self.noise_suppress_timer = 0
+
+    # angle_control 전용 튜닝값
+    self.angle_hold_deadband_deg = 1.0
+    self.angle_hold_step_deg = 0.15
+    self.angle_reversal_frames = int(0.12 / DT_CTRL)
+    self.noise_suppress_frames = int(0.15 / DT_CTRL)
+    self.angle_hold_max_torque = 60.0
+    self.angle_reverse_max_torque = 75.0
 
     self.lkas11_active = False
 
@@ -235,27 +249,79 @@ class CarController(CarControllerBase):
       self.params.ANGLE_LIMITS.STEER_ANGLE_MAX
     )
 
+    angle_error = apply_angle - CS.out.steeringAngleDeg
 
     if angle_control:
       apply_steer_req = CC.latActive
+
+      # 목표각 근처에서는 미세 dithering 억제
+      cmd_delta = abs(apply_angle - self.apply_angle_last)
+      if CC.latActive and abs(angle_error) < self.angle_hold_deadband_deg and cmd_delta < self.angle_hold_step_deg:
+        apply_angle = self.apply_angle_last
+        angle_error = apply_angle - CS.out.steeringAngleDeg
 
     if CS.out.steeringPressed:
       #self.apply_angle_last = CS.out.steeringAngleDeg
       self.lkas_max_torque = max(self.lkas_max_torque - 20, 25)
       self.steer_pressed_timer = int(2.0 / DT_CTRL)
+
+      if angle_control:
+        self.angle_reversal_timer = 0
+        self.noise_suppress_timer = 0
     else:
-      angle_error = abs(apply_angle - CS.out.steeringAngleDeg)
+      abs_err = abs(angle_error)
       target_torque = self.angle_max_torque
 
-      max_steering_tq = self.params.STEER_DRIVER_ALLOWANCE * 0.7
+      max_steering_tq = max(1.0, self.params.STEER_DRIVER_ALLOWANCE * 0.7)
       rate_ratio = max(20, max_steering_tq - abs(CS.out.steeringTorque)) / max_steering_tq
       rate_up = self.params.ANGLE_TORQUE_UP_RATE * rate_ratio
       rate_down = self.params.ANGLE_TORQUE_DOWN_RATE * rate_ratio
 
+      if angle_control:
+        # 작은 오차에서는 조용하게, 큰 오차에서만 큰 토크 허용
+        target_torque = float(np.interp(
+          abs_err,
+          [0.0, 0.5, 1.0, 2.0, 4.0, 8.0],
+          [35.0, 45.0, 60.0, 85.0, 130.0, self.angle_max_torque],
+        ))
+
+        # 방향 반전 순간 핸들 툭 튐 억제
+        reversal = (np.sign(angle_error) != np.sign(self.prev_angle_error)) and (abs_err > 0.5)
+        if reversal:
+          self.angle_reversal_timer = self.angle_reversal_frames
+        else:
+          self.angle_reversal_timer = max(0, self.angle_reversal_timer - 1)
+
+        # EPS 출력토크 급변 감지
+        eps_out_torque = abs(CS.mdps["STEERING_OUT_TORQUE"]) if (CS.mdps is not None and "STEERING_OUT_TORQUE" in CS.mdps) else abs(CS.out.steeringTorque)
+        eps_out_delta = abs(eps_out_torque - self.prev_eps_out_torque)
+
+        settling = abs_err < self.angle_hold_deadband_deg and abs(apply_angle - self.apply_angle_last) < self.angle_hold_step_deg
+
+        # 정착구간에서는 최대토크를 낮춰 소음 억제
+        if settling:
+          target_torque = min(target_torque, self.angle_hold_max_torque)
+
+        # 정착 중 출력토크가 튀면 일시적으로 추가 suppression
+        if settling and eps_out_delta > 20.0:
+          self.noise_suppress_timer = self.noise_suppress_frames
+        else:
+          self.noise_suppress_timer = max(0, self.noise_suppress_timer - 1)
+
+        if self.angle_reversal_timer > 0:
+          target_torque = min(target_torque, self.angle_reverse_max_torque)
+          rate_up *= 0.35
+
+        if self.noise_suppress_timer > 0:
+          target_torque = min(target_torque, self.angle_hold_max_torque)
+          rate_up *= 0.25
+
+        self.prev_eps_out_torque = eps_out_torque
+
       if self.steer_pressed_timer > 0:
         self.steer_pressed_timer -= 1
 
-        if angle_error < 2.0:
+        if abs_err < 2.0:
           self.steer_pressed_timer -= 5
 
         target_torque *= 0.3
@@ -265,10 +331,17 @@ class CarController(CarControllerBase):
       else:
         self.lkas_max_torque = min(self.lkas_max_torque + rate_up, target_torque)
 
-
     if not CC.latActive:
       apply_torque = 0
       self.lkas_max_torque = 0
+
+      if angle_control:
+        self.prev_angle_error = 0.0
+        self.prev_eps_out_torque = 0.0
+        self.angle_reversal_timer = 0
+        self.noise_suppress_timer = 0
+    elif angle_control:
+      self.prev_angle_error = angle_error
 
     self.apply_angle_last = apply_angle
 
@@ -655,4 +728,3 @@ class HyundaiJerk:
         self.jerk_l = min(max(1.0, -self.jerk * 4.0), jerk_max_l)
         self.cb_upper = np.clip(0.9 + accel * 0.2, 0, 1.2)
         self.cb_lower = np.clip(0.8 + accel * 0.2, 0, 1.2)
-
