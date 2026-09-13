@@ -1,0 +1,45 @@
+# 개인 기능 브랜치에 ajouatom의 최신 carrot-wip를 안전하게 병합하는 워크플로
+name: Sync carrot-wip-custom
+
+on:
+  schedule:
+    - cron: "17 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-carrot-wip-custom
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the custom branch
+        uses: actions/checkout@v4
+        with:
+          ref: carrot-wip-custom
+          fetch-depth: 0
+
+      - name: Merge upstream changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/ajouatom/openpilot.git
+          git fetch --no-tags upstream carrot-wip
+
+          before="$(git rev-parse HEAD)"
+          git merge --no-edit upstream/carrot-wip
+          after="$(git rev-parse HEAD)"
+
+          if [[ "$before" == "$after" ]]; then
+            echo "carrot-wip-custom is already up to date."
+            exit 0
+          fi
+
+          git diff --check "$before..$after"
+          git push origin HEAD:carrot-wip-custom
