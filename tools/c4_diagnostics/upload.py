@@ -34,6 +34,12 @@ class UploadConfig:
   file_field: str = "files"
   source_id: str | None = None
   timeout: float = 60.0
+  site: str = ""
+  software_version: str = ""
+  note: str = "K7 radar observation capture"
+  duration_hours: float = 48.0
+  spool_dir: str = "/data/c4-diagnostics/spool"
+  state_path: str = "/data/c4-diagnostics/state.json"
 
 
 def _read_config_file(path: Path | None) -> dict:
@@ -72,6 +78,12 @@ def load_config(path: Path | None = None) -> UploadConfig:
     file_field=str(setting("C4_DIAGNOSTICS_FILE_FIELD", "file_field", "files")),
     source_id=setting("C4_DIAGNOSTICS_SOURCE_ID", "source_id"),
     timeout=float(setting("C4_DIAGNOSTICS_TIMEOUT", "timeout", 60.0)),
+    site=str(setting("C4_DIAGNOSTICS_SITE", "site", "")),
+    software_version=str(setting("C4_DIAGNOSTICS_SOFTWARE_VERSION", "software_version", "")),
+    note=str(setting("C4_DIAGNOSTICS_NOTE", "note", "K7 radar observation capture")),
+    duration_hours=float(setting("C4_DIAGNOSTICS_DURATION_HOURS", "duration_hours", 48.0)),
+    spool_dir=str(setting("C4_DIAGNOSTICS_SPOOL_DIR", "spool_dir", "/data/c4-diagnostics/spool")),
+    state_path=str(setting("C4_DIAGNOSTICS_STATE_PATH", "state_path", "/data/c4-diagnostics/state.json")),
   )
   parsed_url = urlparse(config.api_url)
   local_http = parsed_url.hostname in {"127.0.0.1", "localhost"}
@@ -79,6 +91,8 @@ def load_config(path: Path | None = None) -> UploadConfig:
     raise UploadError("API key transmission requires HTTPS")
   if not config.auth_header or "\n" in config.auth_header or "\r" in config.auth_header:
     raise UploadError("invalid authentication header name")
+  if not 0 < config.duration_hours <= 168:
+    raise UploadError("duration_hours must be greater than zero and no more than 168")
   return config
 
 

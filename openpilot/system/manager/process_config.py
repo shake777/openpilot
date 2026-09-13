@@ -181,6 +181,7 @@ procs = [
   PythonProcess("updated", "openpilot.system.updated.updated", enable_updated, enabled=not PC),
   #PythonProcess("uploader", "openpilot.system.loggerd.uploader", enable_connect),
   PythonProcess("statsd", "openpilot.system.statsd", always_run),
+  PythonProcess("c4_diagnostics", "openpilot.system.c4_diagnostics", only_onroad, enabled=not PC),
   PythonProcess("feedbackd", "openpilot.selfdrive.ui.feedback.feedbackd", only_onroad),
 
   # debug procs
