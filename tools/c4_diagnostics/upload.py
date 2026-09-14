@@ -144,8 +144,9 @@ def build_multipart(fields: dict[str, str], file_field: str, files: list[dict]) 
 
 def upload(config: UploadConfig, source_id: str, upload_id: str, paths: list[Path], optional_fields: dict[str, str]) -> dict:
   normalized_upload_id, file_info = validate_upload(source_id, upload_id, paths)
-  fields = {"source_id": source_id, "upload_id": normalized_upload_id}
-  fields.update({key: value for key, value in optional_fields.items() if value})
+  metadata = {"source_id": source_id, "upload_id": normalized_upload_id}
+  metadata.update({key: value for key, value in optional_fields.items() if value})
+  fields = {"metadata": json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))}
   body, boundary = build_multipart(fields, config.file_field, file_info)
   auth_value = f"{config.auth_scheme} {config.api_key}".strip()
   request = Request(config.api_url, data=body, method="POST", headers={

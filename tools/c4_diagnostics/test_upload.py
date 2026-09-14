@@ -74,8 +74,11 @@ class TestC4DiagnosticsUpload(unittest.TestCase):
       server.server_close()
 
     self.assertEqual(received["headers"]["X-C4-API-Key"], "secret-value")
-    self.assertIn(b'name="source_id"\r\n\r\nc4-001', received["body"])
-    self.assertIn(b'name="upload_id"', received["body"])
+    self.assertIn(b'name="metadata"', received["body"])
+    self.assertIn(b'"source_id":"c4-001"', received["body"])
+    self.assertIn(f'"upload_id":"{upload_id}"'.encode(), received["body"])
+    self.assertIn(b'"site":"factory-a"', received["body"])
+    self.assertNotIn(b'name="source_id"', received["body"])
     self.assertIn(b'name="files"; filename="tmux.log"', received["body"])
     self.assertIn(original, received["body"])
     self.assertEqual(result["upload_id"], upload_id)
