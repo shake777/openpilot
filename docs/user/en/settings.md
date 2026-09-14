@@ -199,6 +199,8 @@ Deceleration preview operates independently of the response level. During active
 
 For Hyundai, Kia, and Genesis, a saved `StoppingAccel=0` is automatically restored to `-50` (-0.50 m/s²) when vehicle control initializes after boot. Existing negative values are preserved, and other brands retain the traditional stop behavior for `0`.
 
+On non-release builds, Developer settings show the **alpha longitudinal** (`AlphaLongitudinalEnabled`) toggle even before vehicle parameters have been generated after a fresh installation. Once vehicle parameters are available, the toggle is hidden and its saved value is removed when the vehicle does not support alpha longitudinal control. Enabling it may disable stock AEB; confirm vehicle support and the actual control state during the next on-road cycle.
+
 On supported Tesla vehicles with the additional vehicle bus detected, the device's **alpha longitudinal** (`AlphaLongitudinalEnabled`) toggle also enables [automatic cruise set-speed adjustment](tesla.md#automatic-cruise-speed) to the vehicle-reported limit. Turning the right speed wheel pauses it; an opposite-direction wheel gesture within one second or disengaging and re-engaging resumes it. There is no separate Carrot Web setting for this feature.
 
 <a id="vehicle-hardware"></a>

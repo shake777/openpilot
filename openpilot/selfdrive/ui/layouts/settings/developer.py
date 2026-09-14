@@ -1,4 +1,5 @@
 from openpilot.common.params import Params
+from openpilot.selfdrive.ui.alpha_longitudinal import alpha_longitudinal_toggle_visible
 from openpilot.selfdrive.ui.widgets.ssh_key import ssh_key_item
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.widgets import Widget
@@ -112,6 +113,8 @@ class DeveloperLayout(Widget):
     for item in (self._joystick_toggle, self._long_maneuver_toggle, self._alpha_long_toggle):
       item.set_visible(not self._is_release)
 
+    self._alpha_long_toggle.set_visible(alpha_longitudinal_toggle_visible(ui_state.CP, self._is_release))
+
     # CP gating
     if ui_state.CP is not None:
       alpha_avail = ui_state.CP.alphaLongitudinalAvailable
@@ -128,7 +131,6 @@ class DeveloperLayout(Widget):
         self._params.put_bool("LongitudinalManeuverMode", False)
     else:
       self._long_maneuver_toggle.action_item.set_enabled(False)
-      self._alpha_long_toggle.set_visible(False)
 
     # TODO: make a param control list item so we don't need to manage internal state as much here
     # refresh toggles from params to mirror external changes

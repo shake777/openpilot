@@ -1,4 +1,5 @@
 from openpilot.common.time_helpers import system_time_valid
+from openpilot.selfdrive.ui.alpha_longitudinal import alpha_longitudinal_toggle_visible
 from openpilot.system.ui.widgets.scroller import NavScroller
 from openpilot.selfdrive.ui.mici.widgets.button import BigButton, BigToggle, BigParamControl, BigCircleParamControl
 from openpilot.selfdrive.ui.mici.widgets.dialog import BigDialog, BigInputDialog
@@ -115,6 +116,8 @@ class DeveloperLayoutMici(NavScroller):
   def _update_toggles(self):
     ui_state.update_params()
 
+    self._alpha_long_toggle.set_visible(alpha_longitudinal_toggle_visible(ui_state.CP, ui_state.is_release))
+
     # CP gating
     if ui_state.CP is not None:
       alpha_avail = ui_state.CP.alphaLongitudinalAvailable
@@ -131,7 +134,6 @@ class DeveloperLayoutMici(NavScroller):
         ui_state.params.put_bool("LongitudinalManeuverMode", False)
     else:
       self._long_maneuver_toggle.set_enabled(False)
-      self._alpha_long_toggle.set_visible(False)
 
     # Refresh toggles from params to mirror external changes
     for key, item in self._refresh_toggles:
