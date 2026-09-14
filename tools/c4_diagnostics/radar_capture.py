@@ -43,13 +43,14 @@ def iter_records(path: Path) -> Iterator[tuple[int, int, int, bytes]]:
 
 
 class RadarCaptureWriter:
-  def __init__(self, spool_dir: Path, wall_time: float | None = None):
+  def __init__(self, spool_dir: Path, wall_time: float | None = None, capture_id: str | None = None):
     self.spool_dir = spool_dir
     self.spool_dir.mkdir(parents=True, exist_ok=True)
     os.chmod(self.spool_dir, 0o700)
     self.started_at = wall_time if wall_time is not None else time.time()
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(self.started_at))
-    self.partial_path = self.spool_dir / f"{stamp}-{uuid.uuid4().hex}.c4radar.partial"
+    self.capture_name = f"{stamp}-{capture_id or uuid.uuid4().hex}"
+    self.partial_path = self.spool_dir / f"{self.capture_name}.c4radar.partial"
     self.stream = self.partial_path.open("wb")
     self.stream.write(MAGIC)
     self.size = len(MAGIC)

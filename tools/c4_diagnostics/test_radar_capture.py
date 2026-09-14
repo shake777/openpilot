@@ -2,9 +2,13 @@
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from tools.c4_diagnostics.auto_upload import deterministic_upload_id, load_or_start_state, pending_captures
-from tools.c4_diagnostics.radar_capture import RadarCaptureWriter, iter_records
+from tools.c4_diagnostics.auto_upload import deterministic_upload_id, load_or_start_state, pending_captures, upload_one
+from tools.c4_diagnostics.radar_capture import MAX_CAPTURE_BYTES, RadarCaptureWriter, iter_records
+from tools.c4_diagnostics.scene_capture import MAX_SCENE_BYTES, SceneCaptureWriter, build_scene_frame
+from tools.c4_diagnostics.upload import MAX_TOTAL_BYTES, UploadConfig
 
 
 class TestRadarCapture(unittest.TestCase):
@@ -55,6 +59,48 @@ class TestRadarCapture(unittest.TestCase):
         deterministic_upload_id("c4-001", second, "abc"),
         deterministic_upload_id("c4-001", second, "abc"),
       )
+
+  def test_scene_capture_keeps_radar_model_and_control_fields(self):
+    xy = SimpleNamespace(x=[0.0, 10.0], y=[0.0, 0.5])
+    radar_point = SimpleNamespace(trackId=7, dRel=20.0, yRel=-1.2, vRel=-2.0, vLead=8.0, aRel=0.1,
+                                  measured=True, radarSource="frontRadar", trackState=2)
+    lead = SimpleNamespace(status=True, radar=True, radarTrackId=7, dRel=20.0, yRel=-1.2, vRel=-2.0,
+                           vLead=8.0, dPath=0.2, modelProb=0.8)
+    model_lead = SimpleNamespace(prob=0.8, x=[21.5], y=[1.2], v=[8.0], a=[-0.1])
+    frame = build_scene_frame(
+      123,
+      SimpleNamespace(vEgo=10.0, steeringAngleDeg=2.0),
+      SimpleNamespace(position=xy, laneLines=[xy] * 4, laneLineProbs=[0.9] * 4, leadsV3=[model_lead]),
+      SimpleNamespace(points=[radar_point]),
+      SimpleNamespace(leadOne=lead, leadTwo=lead),
+      SimpleNamespace(longActive=True, enabled=True, actuators=SimpleNamespace(accel=-0.5)),
+    )
+    with tempfile.TemporaryDirectory() as temp_dir:
+      writer = SceneCaptureWriter(Path(temp_dir), "capture", 1000)
+      self.assertTrue(writer.append(frame))
+      output = writer.finalize()
+      lines = output.read_text(encoding="utf-8").splitlines()
+    self.assertEqual(__import__("json").loads(lines[0]), {"schema": "c4-scene-v1"})
+    saved = __import__("json").loads(lines[1])
+    self.assertEqual(saved["points"][0]["track_id"], 7)
+    self.assertEqual(saved["lead_one"]["d_rel"], 20.0)
+    self.assertEqual(saved["target_accel"], -0.5)
+
+  def test_upload_includes_scene_companion(self):
+    with tempfile.TemporaryDirectory() as temp_dir:
+      root = Path(temp_dir)
+      capture = root / "capture.c4radar"
+      scene = root / "capture.c4scene"
+      capture.write_bytes(b"radar")
+      scene.write_text('{"schema":"c4-scene-v1"}\n', encoding="utf-8")
+      state_path = root / "state.json"
+      state = {"schema": 2, "started_at": 1, "uploaded": {}}
+      with patch("tools.c4_diagnostics.auto_upload.upload", return_value={"upload_id": "id"}) as send:
+        upload_one(UploadConfig("https://example.com", "key"), "c4-001", state, state_path, capture)
+      self.assertEqual(send.call_args.args[3], [capture, scene])
+
+  def test_capture_group_stays_below_upload_limit(self):
+    self.assertLess(MAX_CAPTURE_BYTES + MAX_SCENE_BYTES, MAX_TOTAL_BYTES)
 
 
 if __name__ == "__main__":
