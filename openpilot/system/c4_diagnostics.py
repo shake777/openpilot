@@ -1,4 +1,4 @@
-# 운행 중 K7 레이더 CAN을 48시간만 수집해 C4 전용 서버로 자동 전송하는 서비스
+# 운행 중 K7 레이더 CAN을 C4 전용 서버로 자동 전송하는 서비스
 import os
 import signal
 import threading
@@ -9,7 +9,7 @@ from openpilot.cereal import log
 import openpilot.cereal.messaging as messaging
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
-from tools.c4_diagnostics.auto_upload import is_active, load_or_start_state, pending_captures, upload_one
+from tools.c4_diagnostics.auto_upload import load_or_start_state, pending_captures, upload_one
 from tools.c4_diagnostics.radar_capture import RadarCaptureWriter
 from tools.c4_diagnostics.upload import UploadError, load_config
 
@@ -57,7 +57,7 @@ def wait_for_config(stop_event: threading.Event):
 
 def upload_loop(config, source_id: str, state: dict, state_path: Path, spool_dir: Path,
                 network_online: threading.Event, stop_event: threading.Event) -> None:
-  while not stop_event.is_set() and is_active(state):
+  while not stop_event.is_set():
     if not network_online.wait(UPLOAD_RETRY_SECONDS):
       continue
     captures = pending_captures(spool_dir, state)
@@ -82,11 +82,7 @@ def main() -> None:
 
   spool_dir = Path(config.spool_dir)
   state_path = Path(config.state_path)
-  state = load_or_start_state(state_path, config.duration_hours)
-  if not is_active(state):
-    cloudlog.event("c4_diagnostics_expired", expires_at=state["expires_at"])
-    stop_event.wait()
-    return
+  state = load_or_start_state(state_path)
 
   network_online = threading.Event()
   uploader = threading.Thread(
@@ -100,7 +96,7 @@ def main() -> None:
   sm = messaging.SubMaster(["deviceState"])
   writer = RadarCaptureWriter(spool_dir)
   try:
-    while not stop_event.is_set() and is_active(state):
+    while not stop_event.is_set():
       sm.update(0)
       if sm.valid["deviceState"] and sm["deviceState"].networkType != NetworkType.none:
         network_online.set()

@@ -32,10 +32,10 @@ python3 tools/c4_diagnostics/upload.py \
 
 The client generates a UUID when `--upload-id` is omitted. Reuse an explicitly supplied upload ID when retrying the same files. It rejects invalid UUIDs, more than eight files, and payloads larger than 5 MiB before contacting the server.
 
-## Temporary automatic K7 radar capture
+## Automatic K7 radar capture
 
-On a device, a valid private configuration automatically enables a 48-hour observation window from the first on-road service start. The service captures only classical CAN addresses `0x500` through `0x53f` plus the SCC addresses `0x389`, `0x420`, `0x421`, and `0x50a`. It does not send CAN messages or change driving control.
+On a device, a valid private configuration enables capture whenever this branch's on-road service runs. The service captures only classical CAN addresses `0x500` through `0x53f` plus the SCC addresses `0x389`, `0x420`, `0x421`, and `0x50a`. It does not send CAN messages or change driving control.
 
 Completed captures are rotated at 60 seconds or 2 MiB, whichever comes first. A small `/proc/meminfo` snapshot is uploaded with each capture. Uploads occur only while the car is on-road and `deviceState` reports a network connection. Failed uploads retain the same deterministic UUID and are retried without deleting the local originals.
 
-The service stops capturing and uploading when the 48-hour window expires. To use a different duration of up to seven days, set `duration_hours` in the private configuration before the first run.
+There is no time limit. Capturing and uploading stop when this branch's service is no longer running, such as after switching the device back to a branch without the C4 diagnostics process.

@@ -1,9 +1,9 @@
-# C4 레이더 캡처 형식과 48시간 자동 전송 상태를 검증하는 테스트
+# C4 레이더 캡처 형식과 기간 제한 없는 자동 전송 상태를 검증하는 테스트
 import tempfile
 import unittest
 from pathlib import Path
 
-from tools.c4_diagnostics.auto_upload import deterministic_upload_id, is_active, load_or_start_state, pending_captures
+from tools.c4_diagnostics.auto_upload import deterministic_upload_id, load_or_start_state, pending_captures
 from tools.c4_diagnostics.radar_capture import RadarCaptureWriter, iter_records
 
 
@@ -27,13 +27,20 @@ class TestRadarCapture(unittest.TestCase):
       self.assertIsNone(writer.finalize())
       self.assertEqual(list(Path(temp_dir).iterdir()), [])
 
-  def test_activation_expires_after_48_hours(self):
+  def test_state_has_no_expiration(self):
     with tempfile.TemporaryDirectory() as temp_dir:
       state_path = Path(temp_dir) / "state.json"
-      state = load_or_start_state(state_path, 48, now=1000)
-      self.assertTrue(is_active(state, now=1000 + 48 * 3600 - 1))
-      self.assertFalse(is_active(state, now=1000 + 48 * 3600))
-      self.assertEqual(load_or_start_state(state_path, 48, now=2000), state)
+      state = load_or_start_state(state_path, now=1000)
+      self.assertNotIn("expires_at", state)
+      self.assertEqual(load_or_start_state(state_path, now=2000), state)
+
+  def test_expiring_state_is_migrated_without_losing_upload_history(self):
+    with tempfile.TemporaryDirectory() as temp_dir:
+      state_path = Path(temp_dir) / "state.json"
+      state_path.write_text('{"schema":1,"started_at":1000,"expires_at":2000,"uploaded":{"001.c4radar":{}}}', encoding="utf-8")
+      state = load_or_start_state(state_path, now=3000)
+      self.assertEqual(state, {"schema": 2, "started_at": 1000, "uploaded": {"001.c4radar": {}}})
+      self.assertEqual(load_or_start_state(state_path, now=4000), state)
 
   def test_pending_and_upload_id_are_stable(self):
     with tempfile.TemporaryDirectory() as temp_dir:

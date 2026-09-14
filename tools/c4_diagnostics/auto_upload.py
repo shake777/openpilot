@@ -1,4 +1,4 @@
-# 48시간 활성 기간과 C4 레이더 캡처의 중복 없는 자동 전송 상태를 관리하는 모듈
+# C4 레이더 캡처의 중복 없는 자동 전송 상태를 관리하는 모듈
 import json
 import os
 import time
@@ -9,7 +9,7 @@ from pathlib import Path
 from tools.c4_diagnostics.upload import UploadConfig, UploadError, upload
 
 
-STATE_SCHEMA = 1
+STATE_SCHEMA = 2
 UPLOAD_NAMESPACE = uuid.UUID("c20ca0fb-17d8-4d20-9cba-280e2a8ccaca")
 
 
@@ -22,28 +22,30 @@ def save_state(path: Path, state: dict) -> None:
   os.replace(temporary, path)
 
 
-def load_or_start_state(path: Path, duration_hours: float, now: float | None = None) -> dict:
+def load_or_start_state(path: Path, now: float | None = None) -> dict:
   current_time = time.time() if now is None else now
   if path.exists():
     try:
       state = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
       raise UploadError(f"failed to read automatic upload state: {path}") from exc
-    if state.get("schema") != STATE_SCHEMA or not isinstance(state.get("uploaded"), dict):
+    if state.get("schema") not in {1, STATE_SCHEMA} or not isinstance(state.get("uploaded"), dict):
       raise UploadError("automatic upload state has an unsupported format")
+    if state["schema"] == 1:
+      state = {
+        "schema": STATE_SCHEMA,
+        "started_at": state.get("started_at", current_time),
+        "uploaded": state["uploaded"],
+      }
+      save_state(path, state)
     return state
   state = {
     "schema": STATE_SCHEMA,
     "started_at": current_time,
-    "expires_at": current_time + duration_hours * 3600,
     "uploaded": {},
   }
   save_state(path, state)
   return state
-
-
-def is_active(state: dict, now: float | None = None) -> bool:
-  return (time.time() if now is None else now) < float(state["expires_at"])
 
 
 def deterministic_upload_id(source_id: str, capture: Path, sha256: str) -> str:
