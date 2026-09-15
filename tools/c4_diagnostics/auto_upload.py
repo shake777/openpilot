@@ -54,7 +54,8 @@ def deterministic_upload_id(source_id: str, capture: Path, sha256: str) -> str:
 
 def pending_captures(spool_dir: Path, state: dict) -> list[Path]:
   uploaded = state["uploaded"]
-  return [path for path in sorted(spool_dir.glob("*.c4radar")) if path.name not in uploaded]
+  return [path for path in sorted(spool_dir.glob("*.c4radar"))
+          if path.name not in uploaded and path.with_suffix(".c4scene").is_file()]
 
 
 def upload_one(config: UploadConfig, source_id: str, state: dict, state_path: Path, capture: Path) -> dict:

@@ -21,9 +21,14 @@ def _first(values):
   return _number(values[0]) if len(values) else None
 
 
+def _take(values, limit: int):
+  for index in range(min(len(values), limit)):
+    yield values[index]
+
+
 def _xy(value, limit: int = 33):
-  return [[x, y] for x, y in zip((_number(item) for item in value.x[:limit]),
-                                  (_number(item) for item in value.y[:limit]))
+  return [[x, y] for x, y in zip((_number(item) for item in _take(value.x, limit)),
+                                  (_number(item) for item in _take(value.y, limit)))
           if x is not None and y is not None]
 
 
@@ -56,22 +61,22 @@ def _lead(lead):
 
 
 def build_scene_frame(mono_time: int, car_state, model, live_tracks, radar_state, car_control) -> dict:
-  lane_lines = [_xy(line) for line in model.laneLines[:4]]
+  lane_lines = [_xy(line) for line in _take(model.laneLines, 4)]
   model_leads = [{
     "probability": _number(lead.prob),
     "x": _first(lead.x),
     "y": _first(lead.y),
     "v": _first(lead.v),
     "a": _first(lead.a),
-  } for lead in model.leadsV3[:3]]
+  } for lead in _take(model.leadsV3, 3)]
   return {
     "t": int(mono_time),
     "v_ego": _number(car_state.vEgo),
     "steering_angle_deg": _number(car_state.steeringAngleDeg),
-    "points": [_radar_point(point) for point in live_tracks.points[:64]],
+    "points": [_radar_point(point) for point in _take(live_tracks.points, 64)],
     "path": _xy(model.position),
     "lane_lines": lane_lines,
-    "lane_probs": [_number(value) for value in model.laneLineProbs[:4]],
+    "lane_probs": [_number(value) for value in _take(model.laneLineProbs, 4)],
     "model_leads": model_leads,
     "lead_one": _lead(radar_state.leadOne),
     "lead_two": _lead(radar_state.leadTwo),

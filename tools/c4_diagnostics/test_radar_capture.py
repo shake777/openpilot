@@ -11,6 +11,19 @@ from tools.c4_diagnostics.scene_capture import MAX_SCENE_BYTES, SceneCaptureWrit
 from tools.c4_diagnostics.upload import MAX_TOTAL_BYTES, UploadConfig
 
 
+class IntegerOnlyList:
+  def __init__(self, values):
+    self.values = values
+
+  def __len__(self):
+    return len(self.values)
+
+  def __getitem__(self, index):
+    if not isinstance(index, int):
+      raise TypeError("an integer is required")
+    return self.values[index]
+
+
 class TestRadarCapture(unittest.TestCase):
   def test_capture_keeps_only_radar_addresses_and_original_bytes(self):
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -53,6 +66,7 @@ class TestRadarCapture(unittest.TestCase):
       second = spool / "002.c4radar"
       first.write_bytes(b"first")
       second.write_bytes(b"second")
+      second.with_suffix(".c4scene").write_text('{"schema":"c4-scene-v1"}\n', encoding="utf-8")
       state = {"uploaded": {first.name: {}}}
       self.assertEqual(pending_captures(spool, state), [second])
       self.assertEqual(
@@ -60,18 +74,26 @@ class TestRadarCapture(unittest.TestCase):
         deterministic_upload_id("c4-001", second, "abc"),
       )
 
+  def test_pending_ignores_incomplete_capture_without_scene(self):
+    with tempfile.TemporaryDirectory() as temp_dir:
+      capture = Path(temp_dir) / "crash-fragment.c4radar"
+      capture.write_bytes(b"partial")
+      self.assertEqual(pending_captures(Path(temp_dir), {"uploaded": {}}), [])
+
   def test_scene_capture_keeps_radar_model_and_control_fields(self):
-    xy = SimpleNamespace(x=[0.0, 10.0], y=[0.0, 0.5])
+    xy = SimpleNamespace(x=IntegerOnlyList([0.0, 10.0]), y=IntegerOnlyList([0.0, 0.5]))
     radar_point = SimpleNamespace(trackId=7, dRel=20.0, yRel=-1.2, vRel=-2.0, vLead=8.0, aRel=0.1,
                                   measured=True, radarSource="frontRadar", trackState=2)
     lead = SimpleNamespace(status=True, radar=True, radarTrackId=7, dRel=20.0, yRel=-1.2, vRel=-2.0,
                            vLead=8.0, dPath=0.2, modelProb=0.8)
-    model_lead = SimpleNamespace(prob=0.8, x=[21.5], y=[1.2], v=[8.0], a=[-0.1])
+    model_lead = SimpleNamespace(prob=0.8, x=IntegerOnlyList([21.5]), y=IntegerOnlyList([1.2]),
+                                 v=IntegerOnlyList([8.0]), a=IntegerOnlyList([-0.1]))
     frame = build_scene_frame(
       123,
       SimpleNamespace(vEgo=10.0, steeringAngleDeg=2.0),
-      SimpleNamespace(position=xy, laneLines=[xy] * 4, laneLineProbs=[0.9] * 4, leadsV3=[model_lead]),
-      SimpleNamespace(points=[radar_point]),
+      SimpleNamespace(position=xy, laneLines=IntegerOnlyList([xy] * 4),
+                      laneLineProbs=IntegerOnlyList([0.9] * 4), leadsV3=IntegerOnlyList([model_lead])),
+      SimpleNamespace(points=IntegerOnlyList([radar_point])),
       SimpleNamespace(leadOne=lead, leadTwo=lead),
       SimpleNamespace(longActive=True, enabled=True, actuators=SimpleNamespace(accel=-0.5)),
     )

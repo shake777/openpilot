@@ -19,6 +19,7 @@ NetworkType = log.DeviceState.NetworkType
 CONFIG_RETRY_SECONDS = 60
 UPLOAD_RETRY_SECONDS = 15
 SCENE_INTERVAL_SECONDS = 0.1
+SCENE_SERVICES = ("carState", "modelV2", "liveTracks", "radarState", "carControl")
 
 
 def read_source_id(config) -> str | None:
@@ -84,6 +85,10 @@ def upload_loop(config, source_id: str, state: dict, state_path: Path, spool_dir
       stop_event.wait(UPLOAD_RETRY_SECONDS)
 
 
+def scene_ready(sm) -> bool:
+  return all(sm.seen[name] for name in SCENE_SERVICES)
+
+
 def main() -> None:
   stop_event = threading.Event()
   signal.signal(signal.SIGTERM, lambda *_args: stop_event.set())
@@ -106,8 +111,8 @@ def main() -> None:
 
   can_sock = messaging.sub_sock("can", conflate=False, timeout=1000)
   sm = messaging.SubMaster(["deviceState", "carState", "modelV2", "liveTracks", "radarState", "carControl"])
-  writer = RadarCaptureWriter(spool_dir)
-  scene_writer = SceneCaptureWriter(spool_dir, writer.capture_name, writer.started_at)
+  writer = None
+  scene_writer = None
   next_scene_time = time.monotonic()
   try:
     while not stop_event.is_set():
@@ -117,25 +122,36 @@ def main() -> None:
       else:
         network_online.clear()
 
+      onroad = sm.valid["deviceState"] and sm["deviceState"].started
+      if onroad and writer is None:
+        writer = RadarCaptureWriter(spool_dir)
+        scene_writer = SceneCaptureWriter(spool_dir, writer.capture_name, writer.started_at)
+        next_scene_time = time.monotonic()
+      elif not onroad and writer is not None and scene_writer is not None:
+        finalize_capture(writer, scene_writer)
+        writer = None
+        scene_writer = None
+
       message = messaging.recv_one_or_none(can_sock)
-      if message is not None:
+      if writer is not None and message is not None:
         for frame in message.can:
           writer.append(message.logMonoTime, frame.address, frame.src, bytes(frame.dat))
 
       now = time.time()
       monotonic_now = time.monotonic()
-      if monotonic_now >= next_scene_time and any(sm.seen[name] for name in ("carState", "modelV2", "liveTracks", "radarState")):
+      if scene_writer is not None and monotonic_now >= next_scene_time and scene_ready(sm):
         scene_writer.append(build_scene_frame(
           time.monotonic_ns(), sm["carState"], sm["modelV2"], sm["liveTracks"], sm["radarState"], sm["carControl"],
         ))
         next_scene_time = monotonic_now + SCENE_INTERVAL_SECONDS
 
-      if writer.should_rotate(now) or scene_writer.should_rotate(now):
+      if writer is not None and scene_writer is not None and (writer.should_rotate(now) or scene_writer.should_rotate(now)):
         finalize_capture(writer, scene_writer)
         writer = RadarCaptureWriter(spool_dir, now)
         scene_writer = SceneCaptureWriter(spool_dir, writer.capture_name, writer.started_at)
   finally:
-    finalize_capture(writer, scene_writer)
+    if writer is not None and scene_writer is not None:
+      finalize_capture(writer, scene_writer)
     stop_event.set()
     uploader.join(timeout=5)
 
