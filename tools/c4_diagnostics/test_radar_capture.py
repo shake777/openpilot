@@ -121,6 +121,19 @@ class TestRadarCapture(unittest.TestCase):
         upload_one(UploadConfig("https://example.com", "key"), "c4-001", state, state_path, capture)
       self.assertEqual(send.call_args.args[3], [capture, scene])
 
+  def test_upload_ignores_empty_optional_companion(self):
+    with tempfile.TemporaryDirectory() as temp_dir:
+      root = Path(temp_dir)
+      capture = root / "capture.c4radar"
+      companion = root / "capture.meminfo"
+      capture.write_bytes(b"radar")
+      companion.touch()
+      state_path = root / "state.json"
+      state = {"schema": 2, "started_at": 1, "uploaded": {}}
+      with patch("tools.c4_diagnostics.auto_upload.upload", return_value={"upload_id": "id"}) as send:
+        upload_one(UploadConfig("https://example.com", "key"), "c4-001", state, state_path, capture)
+      self.assertEqual(send.call_args.args[3], [capture])
+
   def test_capture_group_stays_below_upload_limit(self):
     self.assertLess(MAX_CAPTURE_BYTES + MAX_SCENE_BYTES, MAX_TOTAL_BYTES)
 

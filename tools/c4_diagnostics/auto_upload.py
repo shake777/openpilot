@@ -65,7 +65,8 @@ def upload_one(config: UploadConfig, source_id: str, state: dict, state_path: Pa
   upload_id = deterministic_upload_id(source_id, capture, digest)
   scene = capture.with_suffix(".c4scene")
   companion = capture.with_suffix(".meminfo")
-  files = [capture] + ([scene] if scene.is_file() else []) + ([companion] if companion.is_file() else [])
+  files = [capture] + ([scene] if scene.is_file() and scene.stat().st_size else []) \
+                    + ([companion] if companion.is_file() and companion.stat().st_size else [])
   collected_at = datetime.fromtimestamp(capture.stat().st_mtime, timezone.utc).isoformat()
   result = upload(config, source_id, upload_id, files, {
     "site": config.site,
