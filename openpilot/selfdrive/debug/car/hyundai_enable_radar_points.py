@@ -76,24 +76,45 @@ VERSION_PATTERN = re.compile(r'\b\d+\.\d+\b')
 
 
 def read_radar_inventory(uds_client, bus: int) -> dict:
-  fw_version = uds_client.read_data_by_identifier(0xf100)
-  current_config = uds_client.read_data_by_identifier(0x0142)
-  readable = ''.join(chr(value) if 32 <= value < 127 else '.' for value in fw_version)
-  part_number = PART_NUMBER_PATTERN.search(readable)
-  return {
+  from opendbc.car.uds import NegativeResponseError, MessageTimeoutError
+
+  inventory = {
     'mode': 'inventory-only',
     'write_performed': False,
     'diagnostic_session_changed': False,
     'ecu': {'request_address': '0x7d0', 'response_address': '0x7d8', 'bus': bus},
-    'f100': {
-      'raw_hex': fw_version.hex(),
-      'ascii': readable,
-      'part_number': part_number.group(0) if part_number else '',
-      'version_fields': VERSION_PATTERN.findall(readable),
-    },
-    'did_0142': {'raw_hex': current_config.hex(), 'bytes': len(current_config)},
-    'known_activation_support': fw_version in SUPPORTED_FW_VERSIONS,
+    'f100': {'status': 'not_read'},
+    'did_0142': {'status': 'not_read'},
+    'known_activation_support': 'unknown',
+    'firmware_exact_match': None,
+    'complete': False,
   }
+  for data_id, field in ((0xf100, 'f100'), (0x0142, 'did_0142')):
+    try:
+      data = uds_client.read_data_by_identifier(data_id)
+    except (NegativeResponseError, MessageTimeoutError) as error:
+      inventory[field] = {
+        'status': 'error', 'did': f'0x{data_id:04x}',
+        'error_type': type(error).__name__, 'message': str(error),
+      }
+      if isinstance(error, NegativeResponseError):
+        inventory[field]['nrc'] = error.error_code
+      else:
+        inventory[field]['hint'] = 'Check vehicle ignition and diagnostic bus; timeout does not establish the cause.'
+      return inventory
+    inventory[field] = {'status': 'ok', 'raw_hex': data.hex(), 'bytes': len(data)}
+    if data_id == 0xf100:
+      readable = ''.join(chr(value) if 32 <= value < 127 else '.' for value in data)
+      part_number = PART_NUMBER_PATTERN.search(readable)
+      inventory[field].update({
+        'ascii': readable,
+        'part_number': part_number.group(0) if part_number else '',
+        'version_fields': VERSION_PATTERN.findall(readable),
+      })
+      inventory['firmware_exact_match'] = data in SUPPORTED_FW_VERSIONS
+      # 기본 세션 정보만으로 실제 차량의 트랙 활성화 지원을 확정하지 않는다.
+  inventory['complete'] = True
+  return inventory
 
 if __name__ == "__main__":
   from opendbc.car.carlog import carlog
@@ -142,13 +163,11 @@ if __name__ == "__main__":
     print("\n[STRICT READ-ONLY RADAR INVENTORY]")
     try:
       inventory = read_radar_inventory(uds_client, args.bus)
-    except NegativeResponseError as error:
-      print(f"inventory read failed in the default session: {error}")
-      print("inventory-only mode did not change diagnostic session and made no writes")
-      sys.exit(2)
+    finally:
+      panda.close()
     print(json.dumps(inventory, ensure_ascii=False, sort_keys=True))
     print("inventory-only mode did not change diagnostic session and made no writes")
-    sys.exit(0)
+    sys.exit(0 if inventory['complete'] else 2)
 
   if not args.read_only:
     print("\n[START DIAGNOSTIC SESSION]")
@@ -210,12 +229,12 @@ if __name__ == "__main__":
   config_values = SUPPORTED_FW_VERSIONS[fw_version]
   new_config = config_values.default_config if args.default else config_values.tracks_enabled
   if current_config != new_config:
-    print("[CHANGE CONFIGURATION]")
-    print(f"new config:     0x{new_config.hex()}")
-    uds_client.write_data_by_identifier(config_data_id, new_config)
     if not args.default and current_config != SUPPORTED_FW_VERSIONS[fw_version].default_config:
       print("\ncurrent config does not match expected default! (aborted)")
       sys.exit(1)
+    print("[CHANGE CONFIGURATION]")
+    print(f"new config:     0x{new_config.hex()}")
+    uds_client.write_data_by_identifier(config_data_id, new_config)
 
     print("[DONE]")
     print("\nrestart your vehicle and ensure there are no faults")

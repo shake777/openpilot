@@ -1,26 +1,78 @@
 # K7 레이더 인벤토리가 지정된 두 DID만 읽고 결과를 구조화하는지 검증한다.
+import contextlib
+import io
+import json
+import runpy
+import subprocess
 import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
-from openpilot.selfdrive.debug.car.hyundai_enable_radar_points import read_radar_inventory
+from openpilot.selfdrive.debug.car import hyundai_enable_radar_points as radar
+
+
+class MessageTimeoutError(Exception):
+  pass
+
+
+class NegativeResponseError(Exception):
+  def __init__(self, message, service_id, error_code):
+    super().__init__(message)
+    self.service_id = service_id
+    self.error_code = error_code
 
 
 class FakeUdsClient:
   def __init__(self):
     self.requests = []
+    # 응답 형식 검사용 합성값이며 K7 실차 측정값이 아니다.
+    self.responses = {
+      0xf100: b'YG__ SCC F-CUP      1.00 1.02 99110-F6000         ',
+      0x0142: b'\x00\x00\x00\x01\x00\x00',
+    }
 
   def read_data_by_identifier(self, data_id):
     self.requests.append(data_id)
-    return {
-      0xf100: b'YG__ SCC F-CUP      1.00 1.02 99110-F6000         ',
-      0x0142: b'\x00\x00\x00\x01\x00\x00',
-    }[data_id]
+    response = self.responses[data_id]
+    if isinstance(response, Exception):
+      raise response
+    return response
 
 
 class RadarInventoryTests(unittest.TestCase):
+  def setUp(self):
+    self.uds_module = SimpleNamespace(NegativeResponseError=NegativeResponseError, MessageTimeoutError=MessageTimeoutError)
+    self.modules = patch.dict('sys.modules', {'opendbc.car.uds': self.uds_module})
+    self.modules.start()
+    self.addCleanup(self.modules.stop)
+
+  def run_cli(self, client, *args):
+    panda = Mock()
+    self.uds_module.UdsClient = Mock(return_value=client)
+    self.uds_module.SESSION_TYPE = SimpleNamespace(EXTENDED_DIAGNOSTIC=3)
+    self.uds_module.DATA_IDENTIFIER_TYPE = int
+    modules = {
+      'opendbc.car.carlog': SimpleNamespace(carlog=Mock()),
+      'opendbc.car.structs': SimpleNamespace(CarParams=SimpleNamespace(SafetyModel=SimpleNamespace(elm327=3))),
+      'panda.python': SimpleNamespace(Panda=Mock(return_value=panda)),
+    }
+    output = io.StringIO()
+    with patch.dict('sys.modules', modules), patch('sys.argv', [radar.__file__, *args]), \
+         patch('builtins.input', return_value='OK'), \
+         patch('subprocess.check_output', side_effect=subprocess.CalledProcessError(1, 'pidof')), \
+         contextlib.redirect_stdout(output):
+      try:
+        runpy.run_path(radar.__file__, run_name='__main__')
+      except SystemExit as stopped:
+        code = stopped.code
+      else:
+        code = 0
+    return code, output.getvalue(), panda
+
   def test_inventory_reads_only_f100_and_0142(self):
     client = FakeUdsClient()
 
-    inventory = read_radar_inventory(client, bus=0)
+    inventory = radar.read_radar_inventory(client, bus=0)
 
     self.assertEqual(client.requests, [0xf100, 0x0142])
     self.assertIs(inventory['write_performed'], False)
@@ -28,8 +80,79 @@ class RadarInventoryTests(unittest.TestCase):
     self.assertEqual(inventory['ecu'], {'request_address': '0x7d0', 'response_address': '0x7d8', 'bus': 0})
     self.assertEqual(inventory['f100']['part_number'], '99110-F6000')
     self.assertEqual(inventory['f100']['version_fields'], ['1.00', '1.02'])
-    self.assertEqual(inventory['did_0142'], {'raw_hex': '000000010000', 'bytes': 6})
-    self.assertIs(inventory['known_activation_support'], False)
+    self.assertEqual(inventory['did_0142'], {'status': 'ok', 'raw_hex': '000000010000', 'bytes': 6})
+    self.assertEqual(inventory['known_activation_support'], 'unknown')
+    self.assertIs(inventory['firmware_exact_match'], False)
+    self.assertTrue(inventory['complete'])
+
+  def test_cli_preserves_partial_result_for_each_read_failure(self):
+    for data_id in (0xf100, 0x0142):
+      for error in (MessageTimeoutError('timeout waiting for response'), NegativeResponseError('denied', 0x22, 0x31)):
+        with self.subTest(did=data_id, error=type(error).__name__):
+          client = FakeUdsClient()
+          client.responses[data_id] = error
+          code, output, panda = self.run_cli(client, '--inventory-only')
+          inventory = json.loads(next(line for line in output.splitlines() if line.startswith('{')))
+          self.assertEqual(code, 2)
+          self.assertFalse(inventory['complete'])
+          field = 'f100' if data_id == 0xf100 else 'did_0142'
+          self.assertEqual(inventory[field]['error_type'], type(error).__name__)
+          self.assertEqual(inventory[field]['did'], f'0x{data_id:04x}')
+          if isinstance(error, NegativeResponseError):
+            self.assertEqual(inventory[field]['nrc'], 0x31)
+          if data_id == 0x0142:
+            self.assertEqual(inventory['f100']['raw_hex'], client.responses[0xf100].hex())
+            self.assertEqual(client.requests, [0xf100, 0x0142])
+          else:
+            self.assertEqual(inventory['did_0142']['status'], 'not_read')
+            self.assertEqual(client.requests, [0xf100])
+          panda.close.assert_called_once_with()
+
+  def test_exact_match_does_not_authorize_activation(self):
+    client = FakeUdsClient()
+    client.responses[0xf100] = next(iter(radar.SUPPORTED_FW_VERSIONS))
+    inventory = radar.read_radar_inventory(client, 0)
+    self.assertTrue(inventory['firmware_exact_match'])
+    self.assertEqual(inventory['known_activation_support'], 'unknown')
+
+  def test_inventory_cli_success_exits_before_session_or_write(self):
+    client = FakeUdsClient()
+    code, output, panda = self.run_cli(client, '--inventory-only')
+    self.assertEqual(code, 0)
+    self.assertEqual(client.requests, [0xf100, 0x0142])
+    self.assertIn('"complete": true', output)
+    panda.close.assert_called_once_with()
+
+  def test_activation_rejects_unexpected_config_before_write(self):
+    client = FakeUdsClient()
+    client.responses[0xf100] = next(iter(radar.SUPPORTED_FW_VERSIONS))
+    client.responses[0x0142] = b'\x99' * 6
+    client.diagnostic_session_control = Mock()
+    client.write_data_by_identifier = Mock()
+    code, output, _ = self.run_cli(client)
+    self.assertEqual(code, 1)
+    self.assertIn('does not match expected default', output)
+    client.write_data_by_identifier.assert_not_called()
+
+  def test_known_configuration_paths(self):
+    fw, config = next(iter(radar.SUPPORTED_FW_VERSIONS.items()))
+    cases = (
+      (config.default_config, (), config.tracks_enabled),
+      (config.tracks_enabled, (), None),
+      (config.tracks_enabled, ('--default',), config.default_config),
+    )
+    for current, args, expected in cases:
+      with self.subTest(current=current, args=args):
+        client = FakeUdsClient()
+        client.responses.update({0xf100: fw, 0x0142: current})
+        client.diagnostic_session_control = Mock()
+        client.write_data_by_identifier = Mock()
+        code, _, _ = self.run_cli(client, *args)
+        self.assertEqual(code, 0)
+        if expected is None:
+          client.write_data_by_identifier.assert_not_called()
+        else:
+          client.write_data_by_identifier.assert_called_once_with(0x0142, expected)
 
 
 if __name__ == '__main__':
