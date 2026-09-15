@@ -13,14 +13,11 @@ USE AT YOUR OWN RISK! Safety features, like AEB and FCW, might be affected by th
 
 import sys
 import argparse
+import json
+import re
 import time
 from typing import NamedTuple
 from subprocess import check_output, CalledProcessError
-
-from opendbc.car.carlog import carlog
-from opendbc.car.uds import UdsClient, SESSION_TYPE, DATA_IDENTIFIER_TYPE, NegativeResponseError
-from opendbc.car.structs import CarParams
-from panda.python import Panda
 
 class ConfigValues(NamedTuple):
   default_config: bytes
@@ -74,11 +71,42 @@ SUPPORTED_FW_VERSIONS = {
     tracks_enabled=b"\x00\x00\x00\x01\x00\x01"),
 }
 
+PART_NUMBER_PATTERN = re.compile(r'\b\d{5}-[A-Z0-9]{5}\b')
+VERSION_PATTERN = re.compile(r'\b\d+\.\d+\b')
+
+
+def read_radar_inventory(uds_client, bus: int) -> dict:
+  fw_version = uds_client.read_data_by_identifier(0xf100)
+  current_config = uds_client.read_data_by_identifier(0x0142)
+  readable = ''.join(chr(value) if 32 <= value < 127 else '.' for value in fw_version)
+  part_number = PART_NUMBER_PATTERN.search(readable)
+  return {
+    'mode': 'inventory-only',
+    'write_performed': False,
+    'diagnostic_session_changed': False,
+    'ecu': {'request_address': '0x7d0', 'response_address': '0x7d8', 'bus': bus},
+    'f100': {
+      'raw_hex': fw_version.hex(),
+      'ascii': readable,
+      'part_number': part_number.group(0) if part_number else '',
+      'version_fields': VERSION_PATTERN.findall(readable),
+    },
+    'did_0142': {'raw_hex': current_config.hex(), 'bytes': len(current_config)},
+    'known_activation_support': fw_version in SUPPORTED_FW_VERSIONS,
+  }
+
 if __name__ == "__main__":
+  from opendbc.car.carlog import carlog
+  from opendbc.car.uds import UdsClient, SESSION_TYPE, DATA_IDENTIFIER_TYPE, NegativeResponseError
+  from opendbc.car.structs import CarParams
+  from panda.python import Panda
+
   parser = argparse.ArgumentParser(description='configure radar to output points (or reset to default)')
   parser.add_argument('--default', action="store_true", default=False, help='reset to default configuration (default: false)')
   parser.add_argument('--read-only', action="store_true", default=False,
                       help='only read firmware and configuration; never write to the radar')
+  parser.add_argument('--inventory-only', action="store_true", default=False,
+                      help='read only F100 and 0142 in the default session; never change session or write')
   parser.add_argument('--scan-config-dids', action="store_true", default=False,
                       help='with --read-only, scan manufacturer DIDs 0x0100-0x01ff after 0x0142 fails')
   parser.add_argument('--debug', action="store_true", default=False, help='enable debug output (default: false)')
@@ -87,6 +115,8 @@ if __name__ == "__main__":
 
   if args.scan_config_dids and not args.read_only:
     parser.error('--scan-config-dids requires --read-only')
+  if args.inventory_only and (args.read_only or args.scan_config_dids or args.default):
+    parser.error('--inventory-only cannot be combined with --read-only, --scan-config-dids, or --default')
 
   if args.debug:
     carlog.setLevel('DEBUG')
@@ -107,6 +137,18 @@ if __name__ == "__main__":
   panda = Panda()
   panda.set_safety_mode(CarParams.SafetyModel.elm327)
   uds_client = UdsClient(panda, 0x7D0, bus=args.bus)
+
+  if args.inventory_only:
+    print("\n[STRICT READ-ONLY RADAR INVENTORY]")
+    try:
+      inventory = read_radar_inventory(uds_client, args.bus)
+    except NegativeResponseError as error:
+      print(f"inventory read failed in the default session: {error}")
+      print("inventory-only mode did not change diagnostic session and made no writes")
+      sys.exit(2)
+    print(json.dumps(inventory, ensure_ascii=False, sort_keys=True))
+    print("inventory-only mode did not change diagnostic session and made no writes")
+    sys.exit(0)
 
   if not args.read_only:
     print("\n[START DIAGNOSTIC SESSION]")
