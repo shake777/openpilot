@@ -7,3 +7,7 @@
 - `--inventory-only`는 기본 세션에서 F100과 0142만 읽는 조기 종료 경로이며 확장 세션, 전체 DID 스캔, 쓰기·복구 옵션과 조합할 수 없다.
 - 출력에는 ECU 주소와 버스, F100 원본 HEX·ASCII·부품번호·버전 필드, 0142 원본 HEX·길이, 기존 지원 목록 일치 여부가 포함된다.
 - 표준 `unittest`와 Python 컴파일, `git diff --check`가 통과했다.
+- 커밋 `5e52e89a`를 C4의 `carrot-wip-custom`에 fast-forward로 적용했다.
+- C4는 `IsOnroad=0`, `IsOffroad=1`에서 comma tmux를 중지한 뒤 `/usr/local/venv/bin/python3`로 버스 0 인벤토리를 실행했다.
+- 레이더 ECU가 첫 요청인 F100에 응답하지 않아 `MessageTimeoutError`로 종료됐다. 0142, 확장 진단 세션, DID 스캔, 쓰기 서비스는 실행되지 않았다.
+- 종료 처리 후 comma tmux와 `pandad`가 모두 다시 실행 중임을 확인했다. 점화 ON 상태 확인 후 버스 경로를 확정해 재시도해야 한다.
