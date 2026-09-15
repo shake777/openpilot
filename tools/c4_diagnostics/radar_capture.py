@@ -3,6 +3,7 @@ import os
 import struct
 import time
 import uuid
+from collections import deque
 from pathlib import Path
 from typing import Iterator
 
@@ -12,10 +13,21 @@ RECORD_HEADER = struct.Struct("<QIBB")
 MAX_CAPTURE_BYTES = 2 * 1024 * 1024
 MAX_DATA_BYTES = 64
 SCC_ADDRESSES = frozenset((0x389, 0x420, 0x421, 0x50A))
+DIAGNOSTIC_ADDRESSES = frozenset((0x7D0, 0x7D8))
+MAX_PENDING_DIAGNOSTICS = 256
 
 
 def is_radar_address(address: int) -> bool:
-  return 0x500 <= address <= 0x53F or address in SCC_ADDRESSES
+  return 0x500 <= address <= 0x53F or address in SCC_ADDRESSES or address in DIAGNOSTIC_ADDRESSES
+
+
+def capture_can_frame(writer, pending_diagnostics: deque, mono_time: int, address: int, source: int, data: bytes) -> None:
+  if writer is not None:
+    while pending_diagnostics:
+      writer.append(*pending_diagnostics.popleft())
+    writer.append(mono_time, address, source, data)
+  elif address in DIAGNOSTIC_ADDRESSES:
+    pending_diagnostics.append((mono_time, address, source, data))
 
 
 def encode_record(mono_time: int, address: int, source: int, data: bytes) -> bytes:

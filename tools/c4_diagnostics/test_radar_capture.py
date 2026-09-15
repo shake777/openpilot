@@ -1,12 +1,13 @@
 # C4 레이더 캡처 형식과 기간 제한 없는 자동 전송 상태를 검증하는 테스트
 import tempfile
 import unittest
+from collections import deque
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from tools.c4_diagnostics.auto_upload import deterministic_upload_id, load_or_start_state, pending_captures, upload_one
-from tools.c4_diagnostics.radar_capture import MAX_CAPTURE_BYTES, RadarCaptureWriter, iter_records
+from tools.c4_diagnostics.radar_capture import MAX_CAPTURE_BYTES, MAX_PENDING_DIAGNOSTICS, RadarCaptureWriter, capture_can_frame, iter_records
 from tools.c4_diagnostics.scene_capture import MAX_SCENE_BYTES, SceneCaptureWriter, build_scene_frame
 from tools.c4_diagnostics.upload import MAX_TOTAL_BYTES, UploadConfig
 
@@ -25,6 +26,31 @@ class IntegerOnlyList:
 
 
 class TestRadarCapture(unittest.TestCase):
+  def test_diagnostic_request_and_nrc_keep_original_bytes(self):
+    with tempfile.TemporaryDirectory() as temp_dir:
+      pending = deque(maxlen=MAX_PENDING_DIAGNOSTICS)
+      capture_can_frame(None, pending, 100, 0x7d0, 0, b'\x03\x22\xf1\x00')
+      capture_can_frame(None, pending, 101, 0x7d8, 0, b'\x03\x7f\x22\x31')
+      capture_can_frame(None, pending, 102, 0x420, 0, b'offroad')
+      self.assertEqual(len(pending), 2)
+      writer = RadarCaptureWriter(Path(temp_dir), wall_time=1000)
+      capture_can_frame(writer, pending, 103, 0x420, 0, b'onroad')
+      self.assertFalse(pending)
+      capture_can_frame(writer, pending, 104, 0x7d8, 2, b'\x03\x6e\x01\x42')
+      self.assertEqual(list(iter_records(writer.finalize())), [
+        (100, 0x7d0, 0, b'\x03\x22\xf1\x00'),
+        (101, 0x7d8, 0, b'\x03\x7f\x22\x31'),
+        (103, 0x420, 0, b'onroad'),
+        (104, 0x7d8, 2, b'\x03\x6e\x01\x42'),
+      ])
+
+  def test_offroad_diagnostics_buffer_is_bounded(self):
+    pending = deque(maxlen=MAX_PENDING_DIAGNOSTICS)
+    for index in range(MAX_PENDING_DIAGNOSTICS + 10):
+      capture_can_frame(None, pending, index, 0x7d8, 0, b'\x03\x7f\x22\x31')
+    self.assertEqual(len(pending), MAX_PENDING_DIAGNOSTICS)
+    self.assertEqual(pending[0][0], 10)
+
   def test_capture_keeps_only_radar_addresses_and_original_bytes(self):
     with tempfile.TemporaryDirectory() as temp_dir:
       writer = RadarCaptureWriter(Path(temp_dir), wall_time=1000)

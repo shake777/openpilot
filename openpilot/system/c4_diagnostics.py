@@ -3,6 +3,7 @@ import os
 import signal
 import threading
 import time
+from collections import deque
 from pathlib import Path
 
 from openpilot.cereal import log
@@ -10,7 +11,7 @@ import openpilot.cereal.messaging as messaging
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
 from tools.c4_diagnostics.auto_upload import load_or_start_state, pending_captures, upload_one
-from tools.c4_diagnostics.radar_capture import RadarCaptureWriter
+from tools.c4_diagnostics.radar_capture import MAX_PENDING_DIAGNOSTICS, RadarCaptureWriter, capture_can_frame
 from tools.c4_diagnostics.scene_capture import SceneCaptureWriter, build_scene_frame
 from tools.c4_diagnostics.upload import UploadError, load_config
 
@@ -110,6 +111,8 @@ def main() -> None:
   uploader.start()
 
   can_sock = messaging.sub_sock("can", conflate=False, timeout=1000)
+  sendcan_sock = messaging.sub_sock("sendcan", conflate=False)
+  pending_diagnostics = deque(maxlen=MAX_PENDING_DIAGNOSTICS)
   sm = messaging.SubMaster(["deviceState", "carState", "modelV2", "liveTracks", "radarState", "carControl"])
   writer = None
   scene_writer = None
@@ -133,9 +136,13 @@ def main() -> None:
         scene_writer = None
 
       message = messaging.recv_one_or_none(can_sock)
-      if writer is not None and message is not None:
+      if message is not None:
         for frame in message.can:
-          writer.append(message.logMonoTime, frame.address, frame.src, bytes(frame.dat))
+          capture_can_frame(writer, pending_diagnostics, message.logMonoTime, frame.address, frame.src, bytes(frame.dat))
+      for sent in messaging.drain_sock(sendcan_sock, wait_for_one=False):
+        for frame in sent.sendcan:
+          if frame.address == 0x7D0:
+            capture_can_frame(writer, pending_diagnostics, sent.logMonoTime, frame.address, frame.src, bytes(frame.dat))
 
       now = time.time()
       monotonic_now = time.monotonic()
