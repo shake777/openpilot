@@ -282,26 +282,39 @@ def enable_radar_tracks(CP, logcan, sendcan):
 
   ret = False
   sccBus = 2 if CP.flags & HyundaiFlags.CAMERA_SCC.value else 0
-  rdr_fw = None
   rdr_fw_address = 0x7d0 #
+  stage = "session"
+
+  def radar_recv(*args, **kwargs):
+    packets = logcan(*args, **kwargs)
+    for packet in packets:
+      for frame in packet:
+        if frame.address == rdr_fw_address + 8 and frame.src == sccBus:
+          data = bytes(frame.dat)
+          print(f"radar diagnostic rx bus={sccBus} addr=0x{frame.address:x} data={data.hex()}")
+          if len(data) >= 4 and data[0] >> 4 == 0 and (data[0] & 0xf) >= 3 and data[1] == 0x7f:
+            print(f"radar diagnostic rejected service=0x{data[2]:02x} NRC=0x{data[3]:02x}")
+    return packets
+
   try:
-    try:
-      query = IsoTpParallelQuery(sendcan, logcan, sccBus, [rdr_fw_address], [b'\x10\x07'], [b'\x50\x07'])
-      for addr, dat in query.get_data(0.1).items(): # pylint: disable=unused-variable
-        print("ecu write data by id ...")
-        new_config = b"\x00\x00\x00\x01\x00\x01"
-        #new_config = b"\x00\x00\x00\x00\x00\x01"
-        dataId = b'\x01\x42'
-        WRITE_DAT_REQUEST = b'\x2e'
-        WRITE_DAT_RESPONSE = b'\x68'
-        query = IsoTpParallelQuery(sendcan, logcan, sccBus, [rdr_fw_address], [WRITE_DAT_REQUEST+dataId+new_config], [WRITE_DAT_RESPONSE])
-        result = query.get_data(0)
-        print("result=", result)
-        ret = True
-        break
-    except Exception as e:
-      print(f"Failed : {e}") 
+    print(f"radar diagnostic stage={stage} bus={sccBus} request=1007")
+    query = IsoTpParallelQuery(sendcan, radar_recv, sccBus, [rdr_fw_address], [b'\x10\x07'], [b'\x50\x07'])
+    if (rdr_fw_address, None) in query.get_data(0.5, total_timeout=1.0):
+      stage = "write"
+      new_config = b"\x00\x00\x00\x01\x00\x01"
+      dataId = b'\x01\x42'
+      WRITE_DAT_REQUEST = b'\x2e'
+      WRITE_DAT_RESPONSE = b'\x6e' + dataId
+      request = WRITE_DAT_REQUEST + dataId + new_config
+      print(f"radar diagnostic stage={stage} bus={sccBus} request={request.hex()}")
+      query = IsoTpParallelQuery(sendcan, radar_recv, sccBus, [rdr_fw_address], [request], [WRITE_DAT_RESPONSE])
+      result = query.get_data(0.5, total_timeout=1.0)
+      ret = (rdr_fw_address, None) in result
+    if ret:
+      print("radar configuration write acknowledged; track reception is not verified")
+    else:
+      print(f"radar diagnostic stage={stage} failed: no matching positive response; check rx/NRC logs")
   except Exception as e:
-    print("##############  Failed to enable tracks" + str(e))
+    print(f"radar diagnostic stage={stage} failed: {type(e).__name__}: {e}")
   print("################ END Try to enable radar tracks")
   return ret
