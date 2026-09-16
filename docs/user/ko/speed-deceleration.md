@@ -45,7 +45,6 @@ Carrot Web 기본값 복원에 쓰이는 `carrot_settings.json`과 Params 최초
 |---|---:|---:|
 | `AutoCurveSpeedFactor` | 100 | 120 |
 | `AutoNaviSpeedCtrlEnd` | 6 | 7 |
-| `AutoNaviSpeedDecelRate` | 200 | 120 |
 | `MapTurnSpeedFactor` | 100 | 90 |
 | `AutoRoadSpeedAdjust` | 0 | 50 |
 
@@ -54,7 +53,7 @@ Carrot Web 기본값 복원에 쓰이는 `carrot_settings.json`과 Params 최초
 <a id="speed-camera"></a>
 ## 1. 과속카메라
 
-관련 설정은 `AutoNaviSpeedCtrlMode`, `AutoNaviSpeedCtrlEnd`, `AutoNaviSpeedDecelRate`, `AutoNaviSpeedSafetyFactor`, `AutoNaviCountDownMode`, `VehicleNaviCanControl`, `VehicleNaviSchoolZoneControl`, `VehicleSpeedCameraControlMode`, `VehicleSpeedCameraDistanceTime`입니다.
+관련 설정은 `AutoNaviSpeedCtrlMode`, `AutoNaviSpeedCtrlEnd`, `AutoNaviRearCameraHoldDistance`, `AutoNaviSpeedDecelRate`, `AutoNaviSpeedSafetyFactor`, `AutoNaviCountDownMode`, `VehicleNaviCanControl`, `VehicleNaviSchoolZoneControl`, `VehicleSpeedCameraControlMode`, `VehicleSpeedCameraDistanceTime`입니다.
 
 ### `AutoNaviSpeedCtrlMode`
 
@@ -69,7 +68,11 @@ Carrot Web 기본값 복원에 쓰이는 `carrot_settings.json`과 Params 최초
 
 ### 차량 순정 내비 CAN 제어
 
-`VehicleNaviCanControl`은 지원되는 Hyundai/Kia CAN-FD 차량에서 순정 내비가 제공하는 카메라·방지턱의 실제 거리를 감속에 사용할 범위를 정합니다. 기존 켜짐 값 `1`은 그대로 항상 적용 모드로 동작합니다.
+외부 내비가 연결되어 있으면 감속과 카운트다운은 외부 내비만 사용합니다. 외부 내비에 현재 안내나 단속 항목이 없어도 순정 내비의 카메라·방지턱·구간단속·30km/h 구역 제한과 순정 내비 속도 표시는 사용하지 않습니다. 연결 종료 또는 수신 시간 초과가 확인되면 순정 내비를 각 설정에 따라 다시 사용합니다.
+
+`VehicleNaviCanControl`은 지원되는 Hyundai/Kia CAN-FD 차량에서 순정 내비가 제공하는 카메라·방지턱의 실제 거리를 감속에 사용할 범위를 정합니다. 아래 모드는 외부 내비가 연결되지 않았을 때만 적용하며, `1`의 항상 적용은 순정 내비 경로 안내 여부와 관계없이 적용한다는 뜻입니다.
+
+현재 카메라 경고에는 제한속도가 같고 가까운 거리 후보만 연결합니다. 같은 속도의 먼 카메라만 있으면 현재 경고의 가상거리를 사용하며, 먼 카메라는 이후 접근을 위한 후보로 남겨 둡니다.
 
 | 값 | vNAVI 미래 이벤트 적용 범위 |
 |---:|---|
@@ -103,6 +106,16 @@ PV5 구간단속은 평균속도나 남은거리를 계산하지 않습니다. �
 
 차량이 실제 카메라 거리를 제공하지 않고 단속속도만 보낼 때 가상 감속거리를 만듭니다. 화면의 `6.0초`는 50km/h 카메라에서 약 300m, `6.2초`는 약 310m의 가상거리를 뜻하며 변경값은 주행 중 약 1초 안에 반영됩니다.
 
+지원 CAN-FD 차량에서 현재 경고와 일치하는 가까운 카메라 거리가 없을 때도 사용합니다. 새 경고나 제한속도 변경 시 가상거리를 새로 시작하고 주행거리만큼 줄입니다. 거리가 소진되어도 경고가 유지되는 동안에는 감속 제한을 유지하며, 가상거리를 처음 길이로 반복해서 늘리지 않습니다.
+
+### `AutoNaviRearCameraHoldDistance`
+
+외부 내비가 후면 과속 또는 후면 신호·과속 카메라(TMAP 종류 `75/76`)를 안내하면 카메라 지점을 지난 뒤에도 목표속도 제한을 유지합니다. 기본값은 **100m**, 범위는 **0~300m**, 조정 단위는 **10m**이며 `0`은 추가 유지를 끕니다. 값을 높이면 더 멀리까지 유지하고 낮추면 더 빨리 해제합니다.
+
+마지막 50m 접근에서 카메라 위치를 기억하고 이후 주행거리로 추적합니다. 안내가 사라지거나 다음 카메라·방지턱으로 바뀌어도 유지하며, 다른 감속 조건이 더 낮은 속도를 요구하면 그 조건을 적용합니다. 정차 중에는 유지 거리가 줄지 않습니다. 화면에 후면단속 속도 유지와 남은 거리를 표시하며 카운트다운은 원래 카메라 지점에서 끝납니다.
+
+외부 연결 종료, 경로 이탈, 새 내비 세션, 차량 주행거리 초기화 또는 카메라 감속 비활성화 시 초기화합니다. 순정 CAN은 후면 종류를 구분하지 못하므로 이 추가 거리를 적용하지 않고 순정 경고가 유지되는 동안 감속 제한을 유지합니다. 설정 거리는 실제 장비의 측정 종료를 보장하는 값이 아닙니다.
+
 ### `AutoNaviSpeedSafetyFactor`
 
 카메라 목표속도는 다음처럼 계산합니다.
@@ -132,12 +145,14 @@ PV5 구간단속은 평균속도나 남은거리를 계산하지 않습니다. �
 
 ### `AutoNaviSpeedDecelRate`
 
-저장값에 `0.01m/s²`를 곱해 감속 가능 속도 곡선을 계산합니다.
+카탈로그 기본값과 Params 최초 생성값은 모두 `120`이며, 계산 감속률은 `1.20m/s²`입니다. 기존에 저장된 설정은 업데이트만으로 변경되지 않습니다.
+
+저장값에 `0.01m/s²`를 곱해 카메라·방지턱 접근 시 감속 가능 속도 곡선을 계산합니다.
 
 | 저장값 | 계산에 쓰는 감속률 | 체감 방향 |
 |---:|---:|---|
 | 80 | 0.80m/s² | 더 멀리서 완만하게 시작 |
-| 120 | 1.20m/s² | 중간 |
+| 120 | 1.20m/s² | 기본값 |
 | 200 | 2.00m/s² | 더 가까이서 강하게 시작 가능 |
 
 핵심은 **값이 낮을수록 더 일찍 감속**한다는 점입니다. 코드는 남은 거리에서 목표속도까지 감속할 수 있는 현재 속도 상한을 다음 관계로 계산합니다.
@@ -154,7 +169,7 @@ PV5 구간단속은 평균속도나 남은거리를 계산하지 않습니다. �
 | 1 | 턴 지점 + 속도 이벤트, 방지턱 제외 |
 | 2 | 턴 지점 + 속도 이벤트 + 방지턱 |
 
-카운트다운은 남은 거리와 현재 속도로 예상 초를 표시하는 기능입니다. 감속 계산 자체의 시작 시점이나 강도를 바꾸지 않습니다.
+카운트다운은 외부 내비 연결 중에는 외부 내비 거리만, 미연결 시에는 순정 내비 거리를 사용합니다. 연결 상태가 바뀌면 이전 카운트다운을 초기화합니다. 남은 거리와 현재 속도로 예상 초를 표시하며, 감속 계산 자체의 시작 시점이나 강도를 바꾸지 않습니다.
 
 ### 카메라 감속 조정 순서
 
