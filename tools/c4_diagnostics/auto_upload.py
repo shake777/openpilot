@@ -54,7 +54,8 @@ def deterministic_upload_id(source_id: str, capture: Path, sha256: str) -> str:
 
 def pending_captures(spool_dir: Path, state: dict) -> list[Path]:
   uploaded = state["uploaded"]
-  return [path for path in sorted(spool_dir.glob("*.c4radar"))
+  inventory = [path for path in sorted(spool_dir.glob("radar-inventory-*.json")) if path.name not in uploaded]
+  return inventory + [path for path in sorted(spool_dir.glob("*.c4radar"))
           if path.name not in uploaded and path.with_suffix(".c4scene").is_file()]
 
 
@@ -65,8 +66,10 @@ def upload_one(config: UploadConfig, source_id: str, state: dict, state_path: Pa
   upload_id = deterministic_upload_id(source_id, capture, digest)
   scene = capture.with_suffix(".c4scene")
   companion = capture.with_suffix(".meminfo")
-  files = [capture] + ([scene] if scene.is_file() and scene.stat().st_size else []) \
-                    + ([companion] if companion.is_file() and companion.stat().st_size else [])
+  files = [capture]
+  if capture.suffix == ".c4radar":
+    files += ([scene] if scene.is_file() and scene.stat().st_size else []) \
+             + ([companion] if companion.is_file() and companion.stat().st_size else [])
   collected_at = datetime.fromtimestamp(capture.stat().st_mtime, timezone.utc).isoformat()
   result = upload(config, source_id, upload_id, files, {
     "site": config.site,

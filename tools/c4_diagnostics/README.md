@@ -41,3 +41,25 @@ Up to 256 diagnostic frames observed before on-road capture starts are buffered 
 Completed captures are rotated at 60 seconds or 2 MiB, whichever comes first. Each upload includes the original radar CAN capture, a bounded `.c4scene` JSON Lines companion with synchronized `liveTracks`, model path, lane, radar lead, speed, and longitudinal-control state, and a small `/proc/meminfo` snapshot. The scene companion does not include camera video and does not alter vehicle control. Regular radar and scene collection occurs only while the car is on-road; the bounded diagnostic buffer described above may include preceding off-road frames. Completed captures upload whenever `deviceState` reports a network connection, including after the car goes off-road. Failed uploads retain the same deterministic UUID and are retried without deleting the local originals. Incomplete radar-only fragments are preserved locally and are not uploaded.
 
 There is no time limit. Capturing and uploading stop when this branch's service is no longer running, such as after switching the device back to a branch without the C4 diagnostics process.
+
+## Automatic read-only K7 inventory
+
+With the private C4 configuration installed, `card` performs at most one inventory attempt per
+device boot, before `FirmwareQueryDone`, CarParams publication and normal control initialization.
+It requires one connected Panda already in the existing ELM327 fingerprinting safety mode,
+ignition on, fresh valid vehicle/Panda data, P gear, zero wheel/vehicle speeds, accelerator released,
+cruise inactive and controls not ready. The conditions must hold for one second within a three-second
+startup window. Movement, an unsafe/unknown state or an already enabled radar-tracks setting prevents
+the query. Each transmit, including ISO-TP flow control, rechecks the conditions.
+
+Only `22 F1 00`, then `22 01 42` after a positive F100 response, are allowed on address `0x7d0`, bus 0.
+Each read has a 0.5-second total query budget; there is no retry, diagnostic-session change, write,
+ECU disable command, radar activation, Panda safety-mode change or safety-policy modification.
+The normal startup continues after the attempt. If conditions were missed, restart of `card` in the
+same device boot does not retry. A later device boot permits a new attempt.
+
+`radar-inventory-<boot-id>.json` records positive responses, NRCs, no-positive-response, aborted,
+skipped or interrupted outcomes and bounded raw diagnostic frames. Results upload independently of
+driving captures, even when no scene exists. Failed uploads use the existing stable UUID and retry
+policy. Original files stay on the device. The server's generic rules may not interpret the inventory;
+download the original JSON to inspect it. A successful read is not proof that tracks are supported.

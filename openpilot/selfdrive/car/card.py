@@ -112,6 +112,13 @@ class Car:
           cached_params = _cached_params
 
       self.CI = get_car(*self.can_callbacks, obd_callback(self.params), alpha_long_allowed, is_release, num_pandas, cached_params)
+      # C4 전용 읽기 진단은 기존 식별 단계에서만 실행하며 실패해도 정상 시작을 계속한다.
+      if not REPLAY:
+        try:
+          from tools.c4_diagnostics.startup_inventory import run_startup_inventory
+          run_startup_inventory(self.CI, self.sm, self.params, *self.can_callbacks)
+        except Exception:
+          cloudlog.exception("C4 startup radar inventory failed")
       self.RI = interfaces[self.CI.CP.carFingerprint].RadarInterface(self.CI.CP)
       self.CP = self.CI.CP
 
