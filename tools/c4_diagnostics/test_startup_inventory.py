@@ -157,7 +157,8 @@ class TestStartupInventory(unittest.TestCase):
     clock = [0.0]
     cs = cs or parked_state()
     factory = QueryFactory()
-    ci = SimpleNamespace(CP=SimpleNamespace(carFingerprint="KIA_K7"), update=lambda packets: cs)
+    ci = SimpleNamespace(CP=SimpleNamespace(carFingerprint="KIA_K7"),
+                         update=lambda packets: cs() if callable(cs) else cs)
     class Sm:
       valid = {"pandaStates": True}
       updated = {"pandaStates": True}
@@ -201,6 +202,22 @@ class TestStartupInventory(unittest.TestCase):
         report = json.loads(next(Path(tmp).glob("*.json")).read_text())
         self.assertEqual(report["status"], "skipped")
         self.assertIn(report["reason"], ("vehicle_not_stationary", "fresh_vehicle_state_unavailable"))
+
+  def test_startup_waits_for_transient_gear_state(self):
+    with tempfile.TemporaryDirectory() as tmp:
+      updates = 0
+      def changing_state():
+        nonlocal updates
+        updates += 1
+        cs = parked_state()
+        if updates < 3:
+          cs.gearShifter = "unknown"
+        return cs
+      factory, sent = self.startup(Path(tmp), changing_state)
+      self.assertEqual(factory.requests, list(inventory.REQUESTS))
+      self.assertEqual(len(sent), 2)
+      report = json.loads(next(Path(tmp).glob("*.json")).read_text())
+      self.assertEqual(report["status"], "complete")
 
   def test_prior_interrupted_attempt_is_not_retried(self):
     with tempfile.TemporaryDirectory() as tmp:

@@ -193,7 +193,9 @@ def run_startup_inventory(ci, sm, params, can_recv, can_send):
           break
       else:
         stationary_since = None
-        if reason in ("vehicle_not_stationary", "gear_not_park", "cruise_or_accelerator_active",
+        # Gear decoding can be unknown for the first CAN frames. Keep waiting for a stable P state,
+        # but abort immediately if the vehicle moves or control/acceleration becomes active.
+        if reason in ("vehicle_not_stationary", "cruise_or_accelerator_active",
                       "controls_already_ready", "startup_stage_or_track_setting_changed"):
           break
     else:
