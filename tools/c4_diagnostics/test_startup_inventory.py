@@ -202,6 +202,26 @@ class TestStartupInventory(unittest.TestCase):
         report = json.loads(next(Path(tmp).glob("*.json")).read_text())
         self.assertEqual(report["status"], "skipped")
         self.assertIn(report["reason"], ("vehicle_not_stationary", "fresh_vehicle_state_unavailable"))
+        if moving:
+          self.assertEqual(report["stationary_evidence"]["v_ego"], 1.0)
+          self.assertEqual(report["stationary_evidence"]["gear"], "park")
+        else:
+          self.assertNotIn("stationary_evidence", report)
+
+  def test_startup_reports_gear_and_nonfinite_speed_without_transmission(self):
+    for gear, speed, reason, expected_speed in (("drive", 0.0, "gear_not_park", 0.0),
+                                                ("park", float("nan"), "vehicle_not_stationary", None)):
+      with tempfile.TemporaryDirectory() as tmp:
+        cs = parked_state()
+        cs.gearShifter = gear
+        cs.vEgo = speed
+        factory, sent = self.startup(Path(tmp), cs)
+        self.assertEqual(sent, [])
+        self.assertEqual(factory.requests, [])
+        report = json.loads(next(Path(tmp).glob("*.json")).read_text(), parse_constant=lambda value: self.fail(value))
+        self.assertEqual(report["reason"], reason)
+        self.assertEqual(report["stationary_evidence"]["gear"], gear)
+        self.assertEqual(report["stationary_evidence"]["v_ego"], expected_speed)
 
   def test_startup_waits_for_transient_gear_state(self):
     with tempfile.TemporaryDirectory() as tmp:

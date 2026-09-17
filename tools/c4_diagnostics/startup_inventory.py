@@ -47,6 +47,10 @@ def stationary_reason(cs, pandas, *, can_age, panda_age, panda_valid, controls_r
   return None
 
 
+def report_speed(value):
+  return value if math.isfinite(value) else None
+
+
 def allowed_read_frame(frame, request):
   data = bytes(frame.dat)
   return (frame.address == 0x7d0 and frame.src == 0 and
@@ -202,6 +206,13 @@ def run_startup_inventory(ci, sm, params, can_recv, can_send):
       reason = reason or "stationary_window_too_short"
     if report["status"] == "skipped":
       report["reason"] = reason
+      if cs is not None and reason in ("vehicle_not_stationary", "gear_not_park"):
+        report["stationary_evidence"] = {
+          "gear": str(cs.gearShifter), "standstill": bool(cs.standstill),
+          "v_ego": report_speed(cs.vEgo), "v_ego_raw": report_speed(cs.vEgoRaw),
+          "wheel_speeds": {"fl": report_speed(cs.wheelSpeeds.fl), "fr": report_speed(cs.wheelSpeeds.fr),
+                           "rl": report_speed(cs.wheelSpeeds.rl), "rr": report_speed(cs.wheelSpeeds.rr)},
+        }
   except Exception as exc:
     report.update(status="error", error_type=type(exc).__name__)
   finally:
