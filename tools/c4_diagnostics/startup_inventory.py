@@ -10,7 +10,11 @@ from tools.c4_diagnostics.upload import UploadError, load_config
 
 
 K7_PLATFORMS = frozenset(("KIA_K7", "KIA_K7_PE", "KIA_K7_HEV", "KIA_K7_HEV_PE"))
-REQUESTS = (b"\x22\xf1\x00", b"\x22\x01\x42")
+READS = ((b"\x22\xf1\x00", "f100"),
+         (b"\x22\x01\x42", "did_0142"),
+         (b"\x22\xf1\x87", "f187"),
+         (b"\x22\xf1\x95", "f195"))
+REQUESTS = tuple(request for request, _ in READS)
 WAIT_SECONDS = 3.0
 STATIONARY_SECONDS = 1.0
 QUERY_SECONDS = 0.5
@@ -58,8 +62,10 @@ def allowed_read_frame(frame, request):
 
 
 def collect_inventory(can_recv, can_send, ready, query_factory, report):
-  """Only two fixed reads and ISO-TP receive flow control; never change sessions."""
-  report.update(status="running", f100={"status": "not_read"}, did_0142={"status": "not_read"}, raw_frames=[])
+  """Only fixed identification reads and ISO-TP receive flow control; never change sessions."""
+  report.update(status="running", raw_frames=[])
+  for _, field in READS:
+    report[field] = {"status": "not_read"}
 
   def guard():
     reason = ready()
@@ -71,7 +77,7 @@ def collect_inventory(can_recv, can_send, ready, query_factory, report):
       report["raw_frames"].append({"direction": direction, "address": hex(frame.address), "bus": frame.src,
                                    "data": bytes(frame.dat).hex(), "monotonic_ns": time.monotonic_ns()})
 
-  for request, field in zip(REQUESTS, ("f100", "did_0142"), strict=True):
+  for request, field in READS:
     nrc = None
     tx_blocked = False
 
@@ -107,7 +113,7 @@ def collect_inventory(can_recv, can_send, ready, query_factory, report):
       data = result.get((0x7d0, None))
       if data:
         report[field] = {"status": "ok", "raw_hex": data.hex()}
-        if field == "f100":
+        if field in ("f100", "f187", "f195"):
           report[field]["ascii"] = "".join(chr(v) if 32 <= v < 127 else "." for v in data)
         continue
       report[field] = {"status": "tx_blocked" if tx_blocked else "rejected" if nrc is not None else "no_positive_response"}
@@ -115,10 +121,13 @@ def collect_inventory(can_recv, can_send, ready, query_factory, report):
         report[field]["nrc"] = f"0x{nrc:02x}"
     except InventoryAborted as exc:
       report[field] = {"status": "aborted", "reason": str(exc)}
+      report["status"] = "partial" if report["f100"]["status"] == "ok" else "aborted"
+      return
     except Exception as exc:
       report[field] = {"status": "error", "error_type": type(exc).__name__}
-    report["status"] = "partial" if report["f100"]["status"] == "ok" else report[field]["status"]
-    return
+    if field in ("f100", "did_0142"):
+      report["status"] = "partial" if report["f100"]["status"] == "ok" else report[field]["status"]
+      return
   report["status"] = "complete"
 
 

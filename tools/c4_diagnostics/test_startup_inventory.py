@@ -30,7 +30,12 @@ def inactive_panda():
 class QueryFactory:
   def __init__(self, replies=None, frames=(), outgoing=None):
     self.requests = []
-    self.replies = replies if replies is not None else {inventory.REQUESTS[0]: b"K7 SCC firmware", inventory.REQUESTS[1]: b"\x00" * 6}
+    self.replies = replies if replies is not None else {
+      inventory.REQUESTS[0]: b"K7 SCC firmware",
+      inventory.REQUESTS[1]: b"\x00" * 6,
+      inventory.REQUESTS[2]: b"K7 SCC hardware",
+      inventory.REQUESTS[3]: b"K7 SCC software",
+    }
     self.frames = list(frames)
     self.outgoing = outgoing
 
@@ -95,7 +100,10 @@ class TestStartupInventory(unittest.TestCase):
     self.assertEqual(factory.requests, list(inventory.REQUESTS))
     self.assertEqual(report["f100"]["ascii"], "K7 SCC firmware")
     self.assertEqual(report["did_0142"]["raw_hex"], "00" * 6)
-    self.assertEqual([f.dat[:4] for f in sent], [b"\x03\x22\xf1\x00", b"\x03\x22\x01\x42"])
+    self.assertEqual(report["f187"]["ascii"], "K7 SCC hardware")
+    self.assertEqual(report["f195"]["ascii"], "K7 SCC software")
+    self.assertEqual([f.dat[:4] for f in sent], [b"\x03\x22\xf1\x00", b"\x03\x22\x01\x42",
+                                                   b"\x03\x22\xf1\x87", b"\x03\x22\xf1\x95"])
 
   def test_no_response_stops_before_second_did(self):
     report, sent, factory = self.collect(QueryFactory(replies={}))
@@ -120,6 +128,18 @@ class TestStartupInventory(unittest.TestCase):
     report, _, _ = self.collect(QueryFactory(replies={inventory.REQUESTS[0]: b"firmware"}))
     self.assertEqual(report["status"], "partial")
     self.assertEqual(report["f100"]["raw_hex"], b"firmware".hex())
+
+  def test_optional_identification_rejection_does_not_stop_remaining_reads(self):
+    replies = {
+      inventory.REQUESTS[0]: b"firmware",
+      inventory.REQUESTS[1]: b"\x00" * 5,
+      inventory.REQUESTS[3]: b"software",
+    }
+    report, _, factory = self.collect(QueryFactory(replies=replies))
+    self.assertEqual(factory.requests, list(inventory.REQUESTS))
+    self.assertEqual(report["f187"]["status"], "no_positive_response")
+    self.assertEqual(report["f195"]["ascii"], "software")
+    self.assertEqual(report["status"], "complete")
 
   def test_movement_or_state_loss_stops_transmission(self):
     for reason in ("vehicle_not_stationary", "panda_state_unavailable", "controls_already_ready"):
@@ -181,7 +201,7 @@ class TestStartupInventory(unittest.TestCase):
     with tempfile.TemporaryDirectory() as tmp:
       root = Path(tmp)
       factory, sent = self.startup(root)
-      self.assertEqual(len(sent), 2)
+      self.assertEqual(len(sent), 4)
       report = json.loads(next(root.glob("*.json")).read_text())
       self.assertEqual(report["status"], "complete")
       self.assertFalse(report["write_performed"])
@@ -235,7 +255,7 @@ class TestStartupInventory(unittest.TestCase):
         return cs
       factory, sent = self.startup(Path(tmp), changing_state)
       self.assertEqual(factory.requests, list(inventory.REQUESTS))
-      self.assertEqual(len(sent), 2)
+      self.assertEqual(len(sent), 4)
       report = json.loads(next(Path(tmp).glob("*.json")).read_text())
       self.assertEqual(report["status"], "complete")
 
