@@ -244,7 +244,8 @@ if __name__ == "__main__":
 
   if not args.read_only:
     print("\n[START DIAGNOSTIC SESSION]")
-    session_type : SESSION_TYPE = 0x07
+    # K7 99110-F6000 rejects Hyundai's legacy 0x07 session but exposes DID 0x0142 in standard extended session 0x03.
+    session_type : SESSION_TYPE = SESSION_TYPE.EXTENDED_DIAGNOSTIC if args.k7_experimental else 0x07
     uds_client.diagnostic_session_control(session_type)
   else:
     print("\n[READ-ONLY DEFAULT SESSION]")

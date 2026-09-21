@@ -175,6 +175,7 @@ class RadarInventoryTests(unittest.TestCase):
     self.assertEqual(code, 0)
     self.assertIn('K7 readback verified: 0x0002000001', output)
     self.assertEqual(backup['original_config_hex'], '0002000000')
+    client.diagnostic_session_control.assert_called_once_with(3)
     client.write_data_by_identifier.assert_called_once_with(0x0142, radar.K7_EXPERIMENTAL_CONFIG.tracks_enabled)
 
   def test_k7_extended_session_probe_is_read_only_and_returns_to_default(self):
