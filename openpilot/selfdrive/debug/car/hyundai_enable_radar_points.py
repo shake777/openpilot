@@ -240,7 +240,8 @@ if __name__ == "__main__":
               "default_config_hex": None, "extended_config_hex": None, "post_config_hex": None,
               "post_restore_config_hex": None, "final_config_verified": False,
               "security_level": "0x01", "seed_length": None, "default_session_restored": None,
-              "restore_status": "not_attempted", "errors": [], "active_session_before_seed_hex": None}
+              "restore_status": "not_attempted", "errors": [], "active_session_before_seed_hex": None,
+              "session_confirmation_source": None}
 
     def record_error(stage, error):
       entry = {"stage": stage, "error_type": type(error).__name__, "message": str(error)}
@@ -276,44 +277,54 @@ if __name__ == "__main__":
         else:
           print("K7 extended diagnostic session 0x03 is readable; no configuration write was attempted")
           if args.k7_security_probe:
+            session_verified = False
             try:
               active_session = uds_client.read_data_by_identifier(0xf186)
             except (MessageTimeoutError, NegativeResponseError) as error:
               record_error("session_read", error)
-              report["status"] = "session_unverified"
-              result = 4
+              if isinstance(error, NegativeResponseError) and error.error_code == 0x31:
+                # This exact firmware rejected F186, but positively acknowledged 0x03 and kept 0142 readable.
+                session_verified = True
+                report["session_confirmation_source"] = "extended_response_and_0142"
+                print("K7 F186 is unsupported; continuing with positive 0x03 response and unchanged 0142")
+              else:
+                report["status"] = "session_unverified"
+                result = 4
             else:
               report["active_session_before_seed_hex"] = active_session.hex()
               if active_session != b"\x03":
                 report["status"] = "session_not_active"
                 result = 4
               else:
-                print("[REQUEST SECURITY LEVEL 0x01 SEED ONCE]")
-                try:
-                  seed = uds_client.security_access(0x01)
-                  report["status"] = "seed_accepted"
-                  report["seed_length"] = len(seed)
-                  print(f"K7 security seed request accepted ({len(seed)} bytes); no key was sent")
-                  result = 0
-                except (MessageTimeoutError, NegativeResponseError) as error:
-                  record_error("seed", error)
-                  if isinstance(error, NegativeResponseError):
-                    report["status"] = "seed_rejected"
-                    report["seed_nrc"] = f"0x{error.error_code:02x}"
-                    result = 2
-                  else:
-                    report["status"] = "seed_timeout"
-                    result = 5
-                  print(f"K7 security seed request rejected: {error}; no key was sent")
-                try:
-                  verified_config = uds_client.read_data_by_identifier(0x0142)
-                  report["post_config_hex"] = verified_config.hex()
-                  print(f"post-probe config: 0x{verified_config.hex()}")
-                  if verified_config != K7_EXPERIMENTAL_CONFIG.default_config:
-                    report["status"] = "configuration_changed"
-                    result = 3
-                except (MessageTimeoutError, NegativeResponseError) as error:
-                  record_error("post_seed_read", error)
+                session_verified = True
+                report["session_confirmation_source"] = "f186"
+            if session_verified:
+              print("[REQUEST SECURITY LEVEL 0x01 SEED ONCE]")
+              try:
+                seed = uds_client.security_access(0x01)
+                report["status"] = "seed_accepted"
+                report["seed_length"] = len(seed)
+                print(f"K7 security seed request accepted ({len(seed)} bytes); no key was sent")
+                result = 0
+              except (MessageTimeoutError, NegativeResponseError) as error:
+                record_error("seed", error)
+                if isinstance(error, NegativeResponseError):
+                  report["status"] = "seed_rejected"
+                  report["seed_nrc"] = f"0x{error.error_code:02x}"
+                  result = 2
+                else:
+                  report["status"] = "seed_timeout"
+                  result = 5
+                print(f"K7 security seed request rejected: {error}; no key was sent")
+              try:
+                verified_config = uds_client.read_data_by_identifier(0x0142)
+                report["post_config_hex"] = verified_config.hex()
+                print(f"post-probe config: 0x{verified_config.hex()}")
+                if verified_config != K7_EXPERIMENTAL_CONFIG.default_config:
+                  report["status"] = "configuration_changed"
+                  result = 3
+              except (MessageTimeoutError, NegativeResponseError) as error:
+                record_error("post_seed_read", error)
           else:
             result = 0
     except (MessageTimeoutError, NegativeResponseError) as error:

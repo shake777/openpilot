@@ -282,6 +282,45 @@ class RadarInventoryTests(unittest.TestCase):
     client.security_access.assert_not_called()
     client.write_data_by_identifier.assert_not_called()
 
+  def test_k7_security_probe_f186_unsupported_uses_positive_session_response(self):
+    client = FakeUdsClient()
+    client.responses.update({0xf100: b'YG__ SCC FHCUP      1.00 1.02 99110-F6000',
+                             0x0142: radar.K7_EXPERIMENTAL_CONFIG.default_config,
+                             0xf186: NegativeResponseError('request out of range', 0x22, 0x31)})
+    client.diagnostic_session_control = Mock()
+    client.security_access = Mock(side_effect=NegativeResponseError('conditions not correct', 0x27, 0x22))
+    client.write_data_by_identifier = Mock()
+    with tempfile.TemporaryDirectory() as temp_dir:
+      report_path = Path(temp_dir) / 'k7-security-probe-test.json'
+      code, _, _ = self.run_cli(client, '--k7-security-probe', '--probe-output', str(report_path))
+      report = json.loads(report_path.read_text(encoding='utf-8'))
+    self.assertEqual(code, 2)
+    self.assertEqual(report['session_confirmation_source'], 'extended_response_and_0142')
+    self.assertEqual(report['errors'][0]['nrc'], '0x31')
+    self.assertEqual(report['seed_nrc'], '0x22')
+    self.assertTrue(report['final_config_verified'])
+    client.security_access.assert_called_once_with(0x01)
+    client.write_data_by_identifier.assert_not_called()
+
+  def test_k7_security_probe_other_f186_error_still_skips_seed(self):
+    client = FakeUdsClient()
+    client.responses.update({0xf100: b'YG__ SCC FHCUP      1.00 1.02 99110-F6000',
+                             0x0142: radar.K7_EXPERIMENTAL_CONFIG.default_config,
+                             0xf186: NegativeResponseError('conditions not correct', 0x22, 0x22)})
+    client.diagnostic_session_control = Mock()
+    client.security_access = Mock()
+    client.write_data_by_identifier = Mock()
+    with tempfile.TemporaryDirectory() as temp_dir:
+      report_path = Path(temp_dir) / 'k7-security-probe-test.json'
+      code, _, _ = self.run_cli(client, '--k7-security-probe', '--probe-output', str(report_path))
+      report = json.loads(report_path.read_text(encoding='utf-8'))
+    self.assertEqual(code, 4)
+    self.assertEqual(report['status'], 'session_unverified')
+    self.assertIsNone(report['session_confirmation_source'])
+    self.assertTrue(report['final_config_verified'])
+    client.security_access.assert_not_called()
+    client.write_data_by_identifier.assert_not_called()
+
   def test_k7_security_probe_restores_after_session_entry_timeout(self):
     client = FakeUdsClient()
     client.responses.update({0xf100: b'YG__ SCC FHCUP      1.00 1.02 99110-F6000',
