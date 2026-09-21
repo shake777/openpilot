@@ -173,10 +173,10 @@ class TestStartupInventory(unittest.TestCase):
     inventory.collect_inventory(lambda wait=False: [], lambda frames: None, lambda: None, broken_query, report)
     self.assertEqual(report["f100"], {"status": "error", "error_type": "RuntimeError"})
 
-  def startup(self, root, cs=None, frames=True):
+  def startup(self, root, cs=None, frames=True, factory=None):
     clock = [0.0]
     cs = cs or parked_state()
-    factory = QueryFactory()
+    factory = factory or QueryFactory()
     ci = SimpleNamespace(CP=SimpleNamespace(carFingerprint="KIA_K7"),
                          update=lambda packets: cs() if callable(cs) else cs)
     class Sm:
@@ -308,6 +308,139 @@ class TestStartupInventory(unittest.TestCase):
     text = source.read_text(encoding="utf-8")
     ast.parse(text)
     self.assertLess(text.index("run_startup_inventory(self.CI"), text.index('self.params.put_bool("FirmwareQueryDone", True)'))
+
+
+class SecurityQueryFactory(QueryFactory):
+  def __init__(self, seed=b"\x12\x34\x56\x78", nrc=None, outgoing=None):
+    super().__init__()
+    self.replies[inventory.REQUESTS[0]] = b"YG__ SCC FHCUP      1.00 1.02 99110-F6000"
+    self.replies[inventory.REQUESTS[1]] = bytes.fromhex("0002000000")
+    self.seed, self.nrc, self.probe_outgoing = seed, nrc, outgoing
+
+  def __call__(self, send, receive, bus, addresses, requests, responses, **kwargs):
+    if requests[0] != b"\x27\x01":
+      return super().__call__(send, receive, bus, addresses, requests, responses, **kwargs)
+    self.requests.append(requests[0])
+    assert bus == 0 and addresses == [0x7d0] and responses == [b"\x67\x01"]
+    def get_data(timeout, total_timeout):
+      assert timeout == total_timeout == inventory.QUERY_SECONDS
+      send([self.probe_outgoing or Frame(0x7d0, b"\x02\x27\x01".ljust(8, b"\x00"), 0)])
+      self.frames = [Frame(0x7d8, bytes((3, 0x7f, 0x27, self.nrc)), 0)] if self.nrc is not None else []
+      receive(True)
+      return {(0x7d0, None): self.seed} if self.seed is not None else {}
+    return SimpleNamespace(get_data=get_data)
+
+
+class TestStartupSecurityProbe(unittest.TestCase):
+  def collect(self, root, factory=None, ready=lambda: None, report=None):
+    factory = factory or SecurityQueryFactory()
+    report = report if report is not None else {
+      "f100": {"raw_hex": factory.replies[inventory.REQUESTS[0]].hex()},
+      "did_0142": {"raw_hex": factory.replies[inventory.REQUESTS[1]].hex()},
+    }
+    sent = []
+    inventory.collect_startup_security_probe(lambda wait=False: [factory.frames], sent.extend,
+                                            ready, factory, report, root)
+    path = root / f"{inventory.SECURITY_PROBE_NAME}.json"
+    return json.loads(path.read_text()) if path.exists() else None, sent, report
+
+  def test_reboot_path_collects_and_queues_without_manual_command(self):
+    with tempfile.TemporaryDirectory() as tmp:
+      root = Path(tmp)
+      factory = SecurityQueryFactory()
+      TestStartupInventory().startup(root, factory=factory)
+      result = json.loads((root / f"{inventory.SECURITY_PROBE_NAME}.json").read_text())
+      self.assertEqual(result["status"], "seed_accepted")
+      self.assertTrue(result["configuration_verified"])
+      self.assertEqual(factory.requests, list(inventory.REQUESTS) + [b"\x27\x01", b"\x22\x01\x42"])
+      self.assertEqual(len(pending_captures(root, {"uploaded": {}})), 2)
+      _, sent, _ = self.collect(root)
+      self.assertEqual(sent, [])
+
+  def test_only_seed_and_config_read_no_session_key_or_write(self):
+    with tempfile.TemporaryDirectory() as tmp:
+      result, sent, _ = self.collect(Path(tmp))
+      self.assertEqual([f.dat for f in sent], [b"\x02\x27\x01".ljust(8, b"\x00"), b"\x03\x22\x01\x42".ljust(8, b"\x00")])
+      self.assertFalse(result["key_sent"])
+      self.assertFalse(result["write_performed"])
+      self.assertFalse(result["session_changed"])
+      self.assertEqual(result["mode"], "startup_existing_session")
+      self.assertEqual(result["seed_length"], 4)
+      self.assertNotIn("12345678", json.dumps(result))
+
+  def test_rejected_timeout_and_empty_response_are_recorded(self):
+    for factory, status in ((SecurityQueryFactory(seed=None, nrc=0x7e), "seed_rejected"),
+                            (SecurityQueryFactory(seed=None), "no_positive_response"),
+                            (SecurityQueryFactory(seed=b""), "invalid_empty_seed")):
+      with self.subTest(status=status), tempfile.TemporaryDirectory() as tmp:
+        result, _, _ = self.collect(Path(tmp), factory)
+        self.assertEqual(result["status"], status)
+        self.assertTrue(result["configuration_verified"])
+        if factory.nrc:
+          self.assertEqual(result["nrc"], "0x7e")
+
+  def test_identity_and_state_gates_defer_without_claim(self):
+    for field in ("f100", "did_0142", "state"):
+      with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
+        factory = SecurityQueryFactory()
+        report = {"f100": {"raw_hex": factory.replies[inventory.REQUESTS[0]].hex()},
+                  "did_0142": {"raw_hex": factory.replies[inventory.REQUESTS[1]].hex()}}
+        if field != "state":
+          report[field]["raw_hex"] = "00"
+        ready = (lambda: "vehicle_not_stationary") if field == "state" else (lambda: None)
+        result, sent, summary = self.collect(Path(tmp), factory, ready, report)
+        self.assertIsNone(result)
+        self.assertEqual(sent, [])
+        self.assertEqual(summary["security_probe"]["status"], "skipped")
+        self.assertEqual(list(Path(tmp).iterdir()), [])
+
+  def test_condition_loss_after_claim_prevents_send_and_retry(self):
+    with tempfile.TemporaryDirectory() as tmp:
+      root = Path(tmp)
+      calls = iter([None, None, "vehicle_not_stationary"])
+      result, sent, _ = self.collect(root, ready=lambda: next(calls))
+      self.assertEqual(result["status"], "aborted")
+      self.assertEqual(sent, [])
+      _, sent, _ = self.collect(root)
+      self.assertEqual(sent, [])
+
+  def test_receive_state_loss_prevents_configuration_query(self):
+    with tempfile.TemporaryDirectory() as tmp:
+      calls = iter([None, None, None, "controls_already_ready"])
+      result, sent, _ = self.collect(Path(tmp), ready=lambda: next(calls))
+      self.assertEqual(result["status"], "aborted")
+      self.assertEqual(len(sent), 1)
+      self.assertIsNone(result["post_config_hex"])
+
+  def test_forbidden_frames_never_reach_can(self):
+    for address, bus, data in ((0x7d0, 0, b"\x02\x10\x03"), (0x7d0, 0, b"\x02\x27\x02"),
+                               (0x7d0, 0, b"\x03\x2e\x01\x42"), (0x7d1, 0, b"\x02\x27\x01"),
+                               (0x7d0, 2, b"\x02\x27\x01")):
+      with self.subTest(data=data, bus=bus), tempfile.TemporaryDirectory() as tmp:
+        factory = SecurityQueryFactory(outgoing=Frame(address, data.ljust(8, b"\x00"), bus))
+        result, sent, _ = self.collect(Path(tmp), factory)
+        self.assertEqual(result["status"], "aborted")
+        self.assertEqual(sent, [])
+
+  def test_interrupted_attempt_reports_without_retry(self):
+    with tempfile.TemporaryDirectory() as tmp:
+      root = Path(tmp)
+      (root / f"{inventory.SECURITY_PROBE_NAME}.claim").touch()
+      result, sent, _ = self.collect(root)
+      self.assertEqual(result["status"], "interrupted")
+      self.assertEqual(sent, [])
+      self.assertEqual(len(pending_captures(root, {"uploaded": {}})), 1)
+
+  def test_changed_configuration_is_not_reported_as_success(self):
+    with tempfile.TemporaryDirectory() as tmp:
+      factory = SecurityQueryFactory()
+      original = {"f100": {"raw_hex": factory.replies[inventory.REQUESTS[0]].hex()},
+                  "did_0142": {"raw_hex": "0002000000"}}
+      factory.replies[inventory.REQUESTS[1]] = bytes.fromhex("0002000001")
+      result, sent, _ = self.collect(Path(tmp), factory, report=original)
+      self.assertEqual(result["status"], "configuration_changed")
+      self.assertFalse(result["configuration_verified"])
+      self.assertEqual(len(sent), 2)
 
 
 if __name__ == "__main__":

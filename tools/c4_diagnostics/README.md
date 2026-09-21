@@ -52,7 +52,8 @@ cruise inactive and controls not ready. The conditions must hold for one second 
 startup window. Movement, an unsafe/unknown state or an already enabled radar-tracks setting prevents
 the query. Each transmit, including ISO-TP flow control, rechecks the conditions.
 
-Only `22 F1 00`, then `22 01 42` after a positive F100 response, are allowed on address `0x7d0`, bus 0.
+The inventory reads `22 F1 00`, then `22 01 42` after a positive F100 response, followed by optional
+part/software identifiers `22 F1 87` and `22 F1 95`, on address `0x7d0`, bus 0.
 Each read has a 0.5-second total query budget; there is no retry, diagnostic-session change, write,
 ECU disable command, radar activation, Panda safety-mode change or safety-policy modification.
 The normal startup continues after the attempt. If conditions were missed, restart of `card` in the
@@ -63,3 +64,20 @@ skipped or interrupted outcomes and bounded raw diagnostic frames. Results uploa
 driving captures, even when no scene exists. Failed uploads use the existing stable UUID and retry
 policy. Original files stay on the device. The server's generic rules may not interpret the inventory;
 download the original JSON to inspect it. A successful read is not proof that tracks are supported.
+
+## One-time security response after reboot
+
+This private branch also requests `27 01` once during the existing inactive startup stage,
+after the inventory matches K7 `YG__ SCC FHCUP`, firmware `1.00 1.02`, part `99110-F6000`
+and DID `0142=0002000000`. It rechecks the same stationary gates for every transmission.
+It keeps the existing diagnostic session, sends no key or configuration write, then rereads
+`0142`. This is separate from the manual `--k7-security-probe` extended-session test.
+A rejection only describes the current startup session, not all possible sessions.
+
+`k7-security-probe-startup-v1.claim` prevents another automatic attempt across reboots,
+including after an interrupted attempt. Do not delete it to repeatedly probe the ECU.
+Skipped stationary/identity gates are included in each boot's inventory report and can be
+retried on a later boot. The security result JSON includes NRC/timeout/blocked outcomes,
+configuration verification and seed length, without the seed bytes. The existing uploader
+sends it without a driving capture and retries network failures. No terminal command or
+service restart is required after updating and rebooting in P with radar tracks disabled.

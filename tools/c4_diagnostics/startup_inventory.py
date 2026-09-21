@@ -19,6 +19,7 @@ WAIT_SECONDS = 3.0
 STATIONARY_SECONDS = 1.0
 QUERY_SECONDS = 0.5
 MAX_RAW_FRAMES = 64
+SECURITY_PROBE_NAME = "k7-security-probe-startup-v1"
 
 
 class InventoryAborted(Exception):
@@ -142,6 +143,103 @@ def save_report(path, report):
   os.replace(temporary, path)
 
 
+def collect_startup_security_probe(can_recv, can_send, ready, query_factory, inventory, spool):
+  """One seed request in the existing session; never change sessions, send keys or write DIDs."""
+  from openpilot.selfdrive.debug.car.hyundai_enable_radar_points import is_k7_experimental_firmware, K7_EXPERIMENTAL_CONFIG
+
+  path = spool / f"{SECURITY_PROBE_NAME}.json"
+  report = {"schema": "c4-k7-security-probe-v1", "created_at": time.time(), "mode": "startup_existing_session",
+            "status": "not_attempted", "write_performed": False, "key_sent": False, "session_changed": False,
+            "security_level": "0x01", "seed_length": None, "post_config_hex": None}
+  claim_path = path.with_suffix(".claim")
+  if claim_path.exists():
+    if not path.exists():
+      report.update(status="interrupted", reason="previous_attempt_did_not_finish_no_automatic_retry")
+      save_report(path, report)
+    inventory["security_probe"] = {"status": "already_attempted", "report": path.name}
+    return
+  firmware = bytes.fromhex(inventory.get("f100", {}).get("raw_hex", ""))
+  config = bytes.fromhex(inventory.get("did_0142", {}).get("raw_hex", ""))
+  reason = ("firmware_mismatch" if not is_k7_experimental_firmware(firmware) else
+            "configuration_mismatch" if config != K7_EXPERIMENTAL_CONFIG.default_config else ready())
+  if reason is not None:
+    inventory["security_probe"] = {"status": "skipped", "reason": reason}
+    return
+  try:
+    claim = os.open(claim_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+  except FileExistsError:
+    inventory["security_probe"] = {"status": "already_claimed", "report": path.name}
+    return
+  try:
+    os.fsync(claim)
+  finally:
+    os.close(claim)
+  if os.name == "posix":
+    directory = os.open(spool, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+      os.fsync(directory)
+    finally:
+      os.close(directory)
+  report.update(firmware_hex=firmware.hex(), default_config_hex=config.hex())
+
+  def guard():
+    reason = ready()
+    if reason is not None:
+      raise InventoryAborted(reason)
+
+  def query(request, response):
+    nrc = None
+    tx_blocked = False
+
+    def receive(wait_for_one=False):
+      nonlocal nrc, tx_blocked
+      packets = can_recv(wait_for_one)
+      for packet in packets:
+        for frame in packet:
+          data = bytes(frame.dat)
+          if frame.address == 0x7d0 and frame.src == 192:
+            tx_blocked = True
+          if frame.address == 0x7d8 and frame.src == 0 and len(data) >= 4 and data[:3] == bytes((3, 0x7f, request[0])):
+            if data[3] != 0x78:
+              nrc = f"0x{data[3]:02x}"
+      guard()
+      return packets
+
+    def send(frames):
+      guard()
+      allowed = ((bytes((len(request),)) + request).ljust(8, b"\x00"), b"\x30\x00\x0a\x00\x00\x00\x00\x00")
+      if request not in (b"\x27\x01", b"\x22\x01\x42") or not all(
+          frame.address == 0x7d0 and frame.src == 0 and bytes(frame.dat) in allowed for frame in frames):
+        raise InventoryAborted("non_allowlisted_transmission_blocked")
+      can_send(frames)
+
+    guard()
+    result = query_factory(send, receive, 0, [0x7d0], [request], [response],
+                           response_pending_timeout=QUERY_SECONDS).get_data(QUERY_SECONDS, total_timeout=QUERY_SECONDS)
+    guard()
+    return result.get((0x7d0, None)), nrc, tx_blocked
+
+  try:
+    seed, nrc, blocked = query(b"\x27\x01", b"\x67\x01")
+    report["status"] = ("seed_accepted" if seed else "invalid_empty_seed" if seed is not None else
+                        "tx_blocked" if blocked else "seed_rejected" if nrc else "no_positive_response")
+    report["seed_length"] = len(seed) if seed is not None else None
+    if nrc:
+      report["nrc"] = nrc
+    verified, _, _ = query(b"\x22\x01\x42", b"\x62\x01\x42")
+    report["post_config_hex"] = verified.hex() if verified is not None else None
+    report["configuration_verified"] = verified == config
+    if verified is not None and verified != config:
+      report["status"] = "configuration_changed"
+  except InventoryAborted as exc:
+    report.update(status="aborted", reason=str(exc))
+  except Exception as exc:
+    report.update(status="error", error_type=type(exc).__name__)
+  finally:
+    save_report(path, report)
+    inventory["security_probe"] = {"status": report["status"], "report": path.name}
+
+
 def run_startup_inventory(ci, sm, params, can_recv, can_send):
   """Called before FirmwareQueryDone, CarParams publication and CI.init()."""
   if str(ci.CP.carFingerprint) not in K7_PLATFORMS or "REPLAY" in os.environ:
@@ -156,7 +254,8 @@ def run_startup_inventory(ci, sm, params, can_recv, can_send):
   report_path = spool / f"radar-inventory-{boot_id}.json"
   report = {"schema": "c4-radar-inventory-v1", "created_at": time.time(), "car_fingerprint": str(ci.CP.carFingerprint),
             "status": "skipped", "write_performed": False, "session_changed": False, "safety_mode_changed": False,
-            "known_activation_support": "unknown", "bus": 0, "request_address": "0x7d0", "response_address": "0x7d8"}
+            "known_activation_support": "unknown", "bus": 0, "request_address": "0x7d0", "response_address": "0x7d8",
+            "security_probe": {"status": "not_attempted"}}
   try:
     claim = os.open(report_path.with_suffix(".claim"), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
   except FileExistsError:
@@ -203,6 +302,10 @@ def run_startup_inventory(ci, sm, params, can_recv, can_send):
           stationary_since = time.monotonic()
         if time.monotonic() - stationary_since >= STATIONARY_SECONDS:
           collect_inventory(receive, can_send, ready, IsoTpParallelQuery, report)
+          if report["status"] == "complete":
+            collect_startup_security_probe(receive, can_send, ready, IsoTpParallelQuery, report, spool)
+          else:
+            report["security_probe"] = {"status": "skipped", "reason": "inventory_not_complete"}
           break
       else:
         stationary_since = None
@@ -215,6 +318,7 @@ def run_startup_inventory(ci, sm, params, can_recv, can_send):
       reason = reason or "stationary_window_too_short"
     if report["status"] == "skipped":
       report["reason"] = reason
+      report["security_probe"] = {"status": "skipped", "reason": reason}
       if cs is not None and reason in ("vehicle_not_stationary", "gear_not_park"):
         report["stationary_evidence"] = {
           "gear": str(cs.gearShifter), "standstill": bool(cs.standstill),
