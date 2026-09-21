@@ -31,6 +31,7 @@ class FakeUdsClient:
     self.responses = {
       0xf100: b'YG__ SCC F-CUP      1.00 1.02 99110-F6000         ',
       0x0142: b'\x00\x00\x00\x01\x00\x00',
+      0xf186: b'\x03',
     }
 
   def read_data_by_identifier(self, data_id):
@@ -225,7 +226,7 @@ class RadarInventoryTests(unittest.TestCase):
     self.assertEqual(report['post_restore_config_hex'], '0002000000')
     self.assertNotIn('12345678', report_path.name)
     self.assertNotIn('12345678', json.dumps(report))
-    self.assertEqual(client.requests, [0xf100, 0x0142, 0x0142, 0x0142, 0x0142])
+    self.assertEqual(client.requests, [0xf100, 0x0142, 0x0142, 0xf186, 0x0142, 0x0142])
     client.security_access.assert_called_once_with(0x01)
     client.write_data_by_identifier.assert_not_called()
     self.assertEqual(client.diagnostic_session_control.call_args_list, [
@@ -254,6 +255,7 @@ class RadarInventoryTests(unittest.TestCase):
     self.assertEqual(report['status'], 'seed_rejected')
     self.assertEqual(report['post_config_hex'], '0002000000')
     self.assertEqual(report['seed_nrc'], '0x12')
+    self.assertEqual(report['active_session_before_seed_hex'], '03')
     self.assertTrue(report['default_session_restored'])
     self.assertTrue(report['final_config_verified'])
     client.security_access.assert_called_once_with(0x01)
@@ -261,6 +263,87 @@ class RadarInventoryTests(unittest.TestCase):
     self.assertEqual(client.diagnostic_session_control.call_args_list, [
       unittest.mock.call(3), unittest.mock.call(1),
     ])
+
+  def test_k7_security_probe_skips_seed_without_confirmed_session(self):
+    client = FakeUdsClient()
+    client.responses.update({0xf100: b'YG__ SCC FHCUP      1.00 1.02 99110-F6000',
+                             0x0142: radar.K7_EXPERIMENTAL_CONFIG.default_config,
+                             0xf186: b'\x01'})
+    client.diagnostic_session_control = Mock()
+    client.security_access = Mock()
+    client.write_data_by_identifier = Mock()
+    with tempfile.TemporaryDirectory() as temp_dir:
+      report_path = Path(temp_dir) / 'k7-security-probe-test.json'
+      code, _, _ = self.run_cli(client, '--k7-security-probe', '--probe-output', str(report_path))
+      report = json.loads(report_path.read_text(encoding='utf-8'))
+    self.assertEqual(code, 4)
+    self.assertEqual(report['status'], 'session_not_active')
+    self.assertEqual(report['restore_status'], 'confirmed')
+    client.security_access.assert_not_called()
+    client.write_data_by_identifier.assert_not_called()
+
+  def test_k7_security_probe_restores_after_session_entry_timeout(self):
+    client = FakeUdsClient()
+    client.responses.update({0xf100: b'YG__ SCC FHCUP      1.00 1.02 99110-F6000',
+                             0x0142: radar.K7_EXPERIMENTAL_CONFIG.default_config})
+    client.diagnostic_session_control = Mock(side_effect=[MessageTimeoutError('no response'), None])
+    client.security_access = Mock()
+    client.write_data_by_identifier = Mock()
+    with tempfile.TemporaryDirectory() as temp_dir:
+      report_path = Path(temp_dir) / 'k7-security-probe-test.json'
+      code, _, _ = self.run_cli(client, '--k7-security-probe', '--probe-output', str(report_path))
+      report = json.loads(report_path.read_text(encoding='utf-8'))
+    self.assertEqual(code, 5)
+    self.assertEqual(report['errors'][0]['stage'], 'session_enter')
+    self.assertEqual(report['restore_status'], 'confirmed')
+    self.assertTrue(report['final_config_verified'])
+    self.assertEqual(client.diagnostic_session_control.call_args_list, [unittest.mock.call(3), unittest.mock.call(1)])
+    client.security_access.assert_not_called()
+    client.write_data_by_identifier.assert_not_called()
+
+  def test_k7_security_probe_restore_timeout_still_reads_configuration(self):
+    client = FakeUdsClient()
+    client.responses.update({0xf100: b'YG__ SCC FHCUP      1.00 1.02 99110-F6000',
+                             0x0142: radar.K7_EXPERIMENTAL_CONFIG.default_config})
+    client.diagnostic_session_control = Mock(side_effect=[None, MessageTimeoutError('no response')])
+    client.security_access = Mock(return_value=b'\x12\x34')
+    client.write_data_by_identifier = Mock()
+    with tempfile.TemporaryDirectory() as temp_dir:
+      report_path = Path(temp_dir) / 'k7-security-probe-test.json'
+      code, _, _ = self.run_cli(client, '--k7-security-probe', '--probe-output', str(report_path))
+      report = json.loads(report_path.read_text(encoding='utf-8'))
+    self.assertEqual(code, 3)
+    self.assertEqual(report['restore_status'], 'unconfirmed')
+    self.assertEqual(report['post_restore_config_hex'], '0002000000')
+    self.assertEqual(report['errors'][-1]['stage'], 'session_restore')
+    client.write_data_by_identifier.assert_not_called()
+
+  def test_k7_security_probe_post_seed_read_failure_keeps_seed_result(self):
+    client = FakeUdsClient()
+    client.responses.update({0xf100: b'YG__ SCC FHCUP      1.00 1.02 99110-F6000',
+                             0x0142: radar.K7_EXPERIMENTAL_CONFIG.default_config})
+    client.diagnostic_session_control = Mock()
+    client.security_access = Mock(side_effect=NegativeResponseError('denied', 0x27, 0x22))
+    client.write_data_by_identifier = Mock()
+    original_read = client.read_data_by_identifier
+
+    def fail_post_seed(data_id):
+      value = original_read(data_id)
+      if data_id == 0x0142 and client.requests.count(0x0142) == 3:
+        raise MessageTimeoutError('post-seed read timed out')
+      return value
+
+    client.read_data_by_identifier = fail_post_seed
+    with tempfile.TemporaryDirectory() as temp_dir:
+      report_path = Path(temp_dir) / 'k7-security-probe-test.json'
+      code, _, _ = self.run_cli(client, '--k7-security-probe', '--probe-output', str(report_path))
+      report = json.loads(report_path.read_text(encoding='utf-8'))
+    self.assertEqual(code, 2)
+    self.assertEqual(report['status'], 'seed_rejected')
+    self.assertEqual(report['seed_nrc'], '0x22')
+    self.assertEqual(report['errors'][-1]['stage'], 'post_seed_read')
+    self.assertTrue(report['final_config_verified'])
+    client.write_data_by_identifier.assert_not_called()
 
   def test_k7_security_probe_blocks_normal_resumption_if_final_config_differs(self):
     client = FakeUdsClient()
@@ -302,7 +385,7 @@ class RadarInventoryTests(unittest.TestCase):
       code, output, _ = self.run_cli(client, '--k7-security-probe', '--probe-output', str(report_path))
       report = json.loads(report_path.read_text(encoding='utf-8'))
 
-    self.assertEqual(code, 2)
+    self.assertEqual(code, 5)
     self.assertIn('firmware identity mismatch', output)
     self.assertEqual(report['status'], 'firmware_mismatch')
     client.security_access.assert_not_called()

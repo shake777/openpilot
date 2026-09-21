@@ -232,13 +232,22 @@ if __name__ == "__main__":
 
   if args.k7_session_probe or args.k7_security_probe:
     print("\n[K7 EXTENDED SESSION PROBE]")
-    result = 2
-    entered_extended_session = False
+    result = 5
+    session_change_attempted = False
+    session_entered = False
     report = {"schema": "c4-k7-security-probe-v1", "created_at": time.time(), "status": "not_attempted",
               "write_performed": False, "key_sent": False, "firmware_hex": None,
               "default_config_hex": None, "extended_config_hex": None, "post_config_hex": None,
               "post_restore_config_hex": None, "final_config_verified": False,
-              "security_level": "0x01", "seed_length": None, "default_session_restored": None}
+              "security_level": "0x01", "seed_length": None, "default_session_restored": None,
+              "restore_status": "not_attempted", "errors": [], "active_session_before_seed_hex": None}
+
+    def record_error(stage, error):
+      entry = {"stage": stage, "error_type": type(error).__name__, "message": str(error)}
+      if isinstance(error, NegativeResponseError):
+        entry["nrc"] = f"0x{error.error_code:02x}"
+      report["errors"].append(entry)
+
     try:
       fw_version = uds_client.read_data_by_identifier(0xf100)
       current_config = uds_client.read_data_by_identifier(0x0142)
@@ -254,8 +263,9 @@ if __name__ == "__main__":
         report["status"] = "configuration_mismatch"
       else:
         print("[TRY STANDARD EXTENDED DIAGNOSTIC SESSION 0x03]")
+        session_change_attempted = True
         uds_client.diagnostic_session_control(SESSION_TYPE.EXTENDED_DIAGNOSTIC)
-        entered_extended_session = True
+        session_entered = True
         extended_config = uds_client.read_data_by_identifier(0x0142)
         report["extended_config_hex"] = extended_config.hex()
         print(f"extended-session config: 0x{extended_config.hex()}")
@@ -266,55 +276,73 @@ if __name__ == "__main__":
         else:
           print("K7 extended diagnostic session 0x03 is readable; no configuration write was attempted")
           if args.k7_security_probe:
-            print("[REQUEST SECURITY LEVEL 0x01 SEED ONCE]")
             try:
-              seed = uds_client.security_access(0x01)
-              report["status"] = "seed_accepted"
-              report["seed_length"] = len(seed)
-              print(f"K7 security seed request accepted ({len(seed)} bytes); no key was sent")
-              result = 0
+              active_session = uds_client.read_data_by_identifier(0xf186)
             except (MessageTimeoutError, NegativeResponseError) as error:
-              report["status"] = "seed_rejected"
-              report["error"] = str(error)
-              if isinstance(error, NegativeResponseError):
-                report["seed_nrc"] = f"0x{error.error_code:02x}"
-              print(f"K7 security seed request rejected: {error}; no key was sent")
-            verified_config = uds_client.read_data_by_identifier(0x0142)
-            report["post_config_hex"] = verified_config.hex()
-            print(f"post-probe config: 0x{verified_config.hex()}")
-            if verified_config != K7_EXPERIMENTAL_CONFIG.default_config:
-              print("K7 configuration changed unexpectedly; do not start or drive the vehicle")
-              report["status"] = "configuration_changed"
-              result = 3
+              record_error("session_read", error)
+              report["status"] = "session_unverified"
+              result = 4
+            else:
+              report["active_session_before_seed_hex"] = active_session.hex()
+              if active_session != b"\x03":
+                report["status"] = "session_not_active"
+                result = 4
+              else:
+                print("[REQUEST SECURITY LEVEL 0x01 SEED ONCE]")
+                try:
+                  seed = uds_client.security_access(0x01)
+                  report["status"] = "seed_accepted"
+                  report["seed_length"] = len(seed)
+                  print(f"K7 security seed request accepted ({len(seed)} bytes); no key was sent")
+                  result = 0
+                except (MessageTimeoutError, NegativeResponseError) as error:
+                  record_error("seed", error)
+                  if isinstance(error, NegativeResponseError):
+                    report["status"] = "seed_rejected"
+                    report["seed_nrc"] = f"0x{error.error_code:02x}"
+                    result = 2
+                  else:
+                    report["status"] = "seed_timeout"
+                    result = 5
+                  print(f"K7 security seed request rejected: {error}; no key was sent")
+                try:
+                  verified_config = uds_client.read_data_by_identifier(0x0142)
+                  report["post_config_hex"] = verified_config.hex()
+                  print(f"post-probe config: 0x{verified_config.hex()}")
+                  if verified_config != K7_EXPERIMENTAL_CONFIG.default_config:
+                    report["status"] = "configuration_changed"
+                    result = 3
+                except (MessageTimeoutError, NegativeResponseError) as error:
+                  record_error("post_seed_read", error)
           else:
             result = 0
     except (MessageTimeoutError, NegativeResponseError) as error:
+      record_error("session_enter" if session_change_attempted and not session_entered else "extended_read", error)
       print(f"K7 extended diagnostic session probe failed: {error}")
       print("session probe made no configuration write")
       report["status"] = "diagnostic_error"
-      report["error"] = str(error)
+      result = 5
     finally:
-      if entered_extended_session:
+      if session_change_attempted:
         try:
           uds_client.diagnostic_session_control(0x01)
         except (MessageTimeoutError, NegativeResponseError) as error:
+          record_error("session_restore", error)
           report["default_session_restored"] = False
-          report["status"] = "restore_unverified"
-          print(f"K7 default-session return failed: {error}; fully power off the vehicle before further testing")
-          result = 3
+          report["restore_status"] = "unconfirmed" if isinstance(error, MessageTimeoutError) else "failed"
         else:
           report["default_session_restored"] = True
-          print("K7 diagnostic session returned to default 0x01")
-          try:
-            restored_config = uds_client.read_data_by_identifier(0x0142)
-            report["post_restore_config_hex"] = restored_config.hex()
-            report["final_config_verified"] = restored_config == K7_EXPERIMENTAL_CONFIG.default_config
-          except (MessageTimeoutError, NegativeResponseError) as error:
-            report["error"] = str(error)
-          if not report["final_config_verified"]:
-            report["status"] = "restore_unverified"
-            print("K7 default-session configuration could not be verified; do not drive the vehicle")
-            result = 3
+          report["restore_status"] = "confirmed"
+        try:
+          restored_config = uds_client.read_data_by_identifier(0x0142)
+          report["post_restore_config_hex"] = restored_config.hex()
+          report["final_config_verified"] = restored_config == K7_EXPERIMENTAL_CONFIG.default_config
+        except (MessageTimeoutError, NegativeResponseError) as error:
+          record_error("post_restore_read", error)
+        if report["restore_status"] != "confirmed" or not report["final_config_verified"]:
+          report["status"] = "restore_unverified"
+          print("K7 default-session return or configuration could not be verified; do not drive the vehicle")
+          result = 3
       panda.close()
       if args.k7_security_probe:
         try:
