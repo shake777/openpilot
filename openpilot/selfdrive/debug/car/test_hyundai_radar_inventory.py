@@ -211,10 +211,18 @@ class RadarInventoryTests(unittest.TestCase):
     client.security_access = Mock(return_value=b'\x12\x34\x56\x78')
     client.write_data_by_identifier = Mock()
 
-    code, output, panda = self.run_cli(client, '--k7-security-probe')
+    with tempfile.TemporaryDirectory() as temp_dir:
+      report_path = Path(temp_dir) / 'k7-security-probe-test.json'
+      code, output, panda = self.run_cli(client, '--k7-security-probe', '--probe-output', str(report_path))
+      report = json.loads(report_path.read_text(encoding='utf-8'))
 
     self.assertEqual(code, 0)
     self.assertIn('security seed request accepted (4 bytes); no key was sent', output)
+    self.assertEqual(report['status'], 'seed_accepted')
+    self.assertEqual(report['seed_length'], 4)
+    self.assertTrue(report['default_session_restored'])
+    self.assertNotIn('12345678', report_path.name)
+    self.assertNotIn('12345678', json.dumps(report))
     self.assertEqual(client.requests, [0xf100, 0x0142, 0x0142, 0x0142])
     client.security_access.assert_called_once_with(0x01)
     client.write_data_by_identifier.assert_not_called()
@@ -233,11 +241,17 @@ class RadarInventoryTests(unittest.TestCase):
     client.security_access = Mock(side_effect=NegativeResponseError('sub-function not supported', 0x27, 0x12))
     client.write_data_by_identifier = Mock()
 
-    code, output, _ = self.run_cli(client, '--k7-security-probe')
+    with tempfile.TemporaryDirectory() as temp_dir:
+      report_path = Path(temp_dir) / 'k7-security-probe-test.json'
+      code, output, _ = self.run_cli(client, '--k7-security-probe', '--probe-output', str(report_path))
+      report = json.loads(report_path.read_text(encoding='utf-8'))
 
     self.assertEqual(code, 2)
     self.assertIn('security seed request rejected', output)
     self.assertIn('post-probe config: 0x0002000000', output)
+    self.assertEqual(report['status'], 'seed_rejected')
+    self.assertEqual(report['post_config_hex'], '0002000000')
+    self.assertTrue(report['default_session_restored'])
     client.security_access.assert_called_once_with(0x01)
     client.write_data_by_identifier.assert_not_called()
     self.assertEqual(client.diagnostic_session_control.call_args_list, [
@@ -250,10 +264,14 @@ class RadarInventoryTests(unittest.TestCase):
     client.diagnostic_session_control = Mock()
     client.write_data_by_identifier = Mock()
 
-    code, output, _ = self.run_cli(client, '--k7-security-probe')
+    with tempfile.TemporaryDirectory() as temp_dir:
+      report_path = Path(temp_dir) / 'k7-security-probe-test.json'
+      code, output, _ = self.run_cli(client, '--k7-security-probe', '--probe-output', str(report_path))
+      report = json.loads(report_path.read_text(encoding='utf-8'))
 
     self.assertEqual(code, 2)
     self.assertIn('firmware identity mismatch', output)
+    self.assertEqual(report['status'], 'firmware_mismatch')
     client.security_access.assert_not_called()
     client.diagnostic_session_control.assert_not_called()
     client.write_data_by_identifier.assert_not_called()

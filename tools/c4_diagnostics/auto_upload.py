@@ -55,7 +55,8 @@ def deterministic_upload_id(source_id: str, capture: Path, sha256: str) -> str:
 def pending_captures(spool_dir: Path, state: dict) -> list[Path]:
   uploaded = state["uploaded"]
   inventory = [path for path in sorted(spool_dir.glob("radar-inventory-*.json")) if path.name not in uploaded]
-  return inventory + [path for path in sorted(spool_dir.glob("*.c4radar"))
+  probe = [path for path in sorted(spool_dir.glob("k7-security-probe-*.json")) if path.name not in uploaded]
+  return inventory + probe + [path for path in sorted(spool_dir.glob("*.c4radar"))
           if path.name not in uploaded and path.with_suffix(".c4scene").is_file()]
 
 

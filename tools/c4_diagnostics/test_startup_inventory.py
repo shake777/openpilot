@@ -286,6 +286,23 @@ class TestStartupInventory(unittest.TestCase):
       self.assertEqual(pending_captures(root, state), [])
       self.assertTrue(report.is_file())
 
+  def test_security_probe_report_uploads_once_after_offline_retry(self):
+    with tempfile.TemporaryDirectory() as tmp:
+      root = Path(tmp)
+      report = root / "k7-security-probe-test.json"
+      inventory.save_report(report, {"schema": "c4-k7-security-probe-v1", "status": "seed_rejected"})
+      state = {"schema": 2, "uploaded": {}}
+      self.assertEqual(pending_captures(root, state), [report])
+      config = UploadConfig("https://example.com", "key")
+      with patch("tools.c4_diagnostics.auto_upload.upload", side_effect=UploadError("offline")):
+        with self.assertRaises(UploadError):
+          upload_one(config, "c4-test", state, root / "state.json", report)
+      self.assertEqual(pending_captures(root, state), [report])
+      with patch("tools.c4_diagnostics.auto_upload.upload", return_value={"upload_id": "ok"}) as send:
+        upload_one(config, "c4-test", state, root / "state.json", report)
+      self.assertEqual(send.call_args.args[3], [report])
+      self.assertEqual(pending_captures(root, state), [])
+
   def test_hook_precedes_firmware_query_done(self):
     source = Path(__file__).resolve().parents[2] / "openpilot/selfdrive/car/card.py"
     text = source.read_text(encoding="utf-8")
