@@ -13,12 +13,14 @@ USE AT YOUR OWN RISK! Safety features, like AEB and FCW, might be affected by th
 
 import sys
 import argparse
+import json
 import time
+from pathlib import Path
 from typing import NamedTuple
 from subprocess import check_output, CalledProcessError
 
 from opendbc.car.carlog import carlog
-from opendbc.car.uds import UdsClient, SESSION_TYPE, DATA_IDENTIFIER_TYPE, NegativeResponseError
+from opendbc.car.uds import UdsClient, SESSION_TYPE, DATA_IDENTIFIER_TYPE, MessageTimeoutError, NegativeResponseError
 from opendbc.car.structs import CarParams
 from panda.python import Panda
 
@@ -74,19 +76,51 @@ SUPPORTED_FW_VERSIONS = {
     tracks_enabled=b"\x00\x00\x00\x01\x00\x01"),
 }
 
+K7_EXPERIMENTAL_CONFIG = ConfigValues(
+  default_config=b"\x00\x02\x00\x00\x00",
+  tracks_enabled=b"\x00\x02\x00\x00\x01",
+)
+K7_BACKUP_PATH = Path("/data/k7-radar-0142-backup.json")
+
+
+def is_k7_experimental_firmware(fw_version: bytes) -> bool:
+  return b"YG__ SCC FHCUP" in fw_version and b"99110-F6000" in fw_version and b"1.00 1.02" in fw_version
+
+
+def save_k7_backup(fw_version: bytes, current_config: bytes, path: Path = K7_BACKUP_PATH) -> None:
+  record = {"firmware_hex": fw_version.hex(), "original_config_hex": current_config.hex()}
+  if path.exists():
+    if json.loads(path.read_text(encoding="utf-8")) != record:
+      raise ValueError(f"backup mismatch at {path}")
+    return
+  path.parent.mkdir(parents=True, exist_ok=True)
+  temp_path = path.with_suffix(path.suffix + ".tmp")
+  temp_path.write_text(json.dumps(record, sort_keys=True), encoding="utf-8")
+  temp_path.replace(path)
+
+
+def load_k7_backup(path: Path = K7_BACKUP_PATH) -> bytes:
+  return bytes.fromhex(json.loads(path.read_text(encoding="utf-8"))["original_config_hex"])
+
 if __name__ == "__main__":
   parser = argparse.ArgumentParser(description='configure radar to output points (or reset to default)')
   parser.add_argument('--default', action="store_true", default=False, help='reset to default configuration (default: false)')
   parser.add_argument('--read-only', action="store_true", default=False,
                       help='only read firmware and configuration; never write to the radar')
+  parser.add_argument('--k7-experimental', action="store_true", default=False,
+                      help='explicitly test K7 99110-F6000 candidate; saves and verifies the original configuration')
+  parser.add_argument('--backup-path', default=str(K7_BACKUP_PATH), help=argparse.SUPPRESS)
   parser.add_argument('--scan-config-dids', action="store_true", default=False,
                       help='with --read-only, scan manufacturer DIDs 0x0100-0x01ff after 0x0142 fails')
   parser.add_argument('--debug', action="store_true", default=False, help='enable debug output (default: false)')
   parser.add_argument('--bus', type=int, default=0, help='can bus to use (default: 0)')
   args = parser.parse_args()
+  k7_backup_path = Path(args.backup_path)
 
   if args.scan_config_dids and not args.read_only:
     parser.error('--scan-config-dids requires --read-only')
+  if args.k7_experimental and (args.read_only or args.scan_config_dids):
+    parser.error('--k7-experimental cannot be combined with read-only options')
 
   if args.debug:
     carlog.setLevel('DEBUG')
@@ -119,7 +153,11 @@ if __name__ == "__main__":
   fw_version_data_id : DATA_IDENTIFIER_TYPE = 0xf100
   fw_version = uds_client.read_data_by_identifier(fw_version_data_id)
   print(fw_version)
-  if fw_version not in SUPPORTED_FW_VERSIONS and not args.read_only:
+  k7_experimental = args.k7_experimental and is_k7_experimental_firmware(fw_version)
+  if args.k7_experimental and not k7_experimental:
+    print("K7 experimental firmware identity mismatch! (aborted)")
+    sys.exit(1)
+  if fw_version not in SUPPORTED_FW_VERSIONS and not args.read_only and not k7_experimental:
     print("radar not supported! (aborted)")
     sys.exit(1)
 
@@ -165,15 +203,50 @@ if __name__ == "__main__":
     print(f"radar configuration is {support_status}; read-only mode made no changes")
     sys.exit(0)
 
-  config_values = SUPPORTED_FW_VERSIONS[fw_version]
-  new_config = config_values.default_config if args.default else config_values.tracks_enabled
+  config_values = K7_EXPERIMENTAL_CONFIG if k7_experimental else SUPPORTED_FW_VERSIONS[fw_version]
+  if k7_experimental and not args.default and current_config != config_values.default_config:
+    print("\nK7 config does not match the measured factory value! (aborted)")
+    sys.exit(1)
+  if k7_experimental:
+    try:
+      if not args.default:
+        save_k7_backup(fw_version, current_config, k7_backup_path)
+      new_config = load_k7_backup(k7_backup_path) if args.default and k7_backup_path.exists() else config_values.default_config if args.default else config_values.tracks_enabled
+    except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
+      print(f"K7 backup validation failed: {error} (aborted)")
+      sys.exit(1)
+  else:
+    new_config = config_values.default_config if args.default else config_values.tracks_enabled
   if current_config != new_config:
-    print("[CHANGE CONFIGURATION]")
-    print(f"new config:     0x{new_config.hex()}")
-    uds_client.write_data_by_identifier(config_data_id, new_config)
-    if not args.default and current_config != SUPPORTED_FW_VERSIONS[fw_version].default_config:
+    if not args.default and current_config != config_values.default_config:
       print("\ncurrent config does not match expected default! (aborted)")
       sys.exit(1)
+    print("[CHANGE CONFIGURATION]")
+    print(f"new config:     0x{new_config.hex()}")
+    if k7_experimental:
+      try:
+        uds_client.write_data_by_identifier(config_data_id, new_config)
+        verified_config = uds_client.read_data_by_identifier(config_data_id)
+        if verified_config == new_config:
+          print(f"K7 readback verified: 0x{verified_config.hex()}")
+        else:
+          raise ValueError(f"readback mismatch: 0x{verified_config.hex()}")
+      except (MessageTimeoutError, NegativeResponseError, ValueError) as error:
+        print(f"K7 activation verification failed: {error}; restoring original configuration")
+        original_config = load_k7_backup(k7_backup_path)
+        try:
+          uds_client.write_data_by_identifier(config_data_id, original_config)
+          restored_config = uds_client.read_data_by_identifier(config_data_id)
+        except (MessageTimeoutError, NegativeResponseError) as restore_error:
+          print(f"K7 automatic restore failed: {restore_error}; do not start or drive the vehicle")
+          sys.exit(3)
+        if restored_config != original_config:
+          print(f"K7 restore mismatch: 0x{restored_config.hex()}; do not start or drive the vehicle")
+          sys.exit(3)
+        print(f"K7 restore verified: 0x{restored_config.hex()}")
+        sys.exit(2)
+    else:
+      uds_client.write_data_by_identifier(config_data_id, new_config)
 
     print("[DONE]")
     print("\nrestart your vehicle and ensure there are no faults")

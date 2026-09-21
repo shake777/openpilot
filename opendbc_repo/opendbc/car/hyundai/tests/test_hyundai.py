@@ -63,6 +63,22 @@ class TestHyundaiFingerprint:
     assert not CP.openpilotLongitudinalControl
     assert not CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.LONG.value
 
+  def test_raw_track_observation_does_not_enable_longitudinal(self, monkeypatch):
+    class FakeParams:
+      def get_int(self, key):
+        return 4 if key == "EnableRadarTracks" else 0
+
+      def get_bool(self, key):
+        return False
+
+    monkeypatch.setattr(interface_module, "Params", FakeParams)
+    fingerprint = gen_empty_fingerprint()
+    CP = CarInterface.get_params(CAR.KIA_K7, fingerprint, [], False, False)
+
+    assert not CP.radarUnavailable
+    assert not CP.openpilotLongitudinalControl
+    assert not CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.LONG.value
+
   def test_feature_detection(self):
     # LKA steering
     for lka_steering in (True, False):
