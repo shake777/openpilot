@@ -177,6 +177,26 @@ class RadarInventoryTests(unittest.TestCase):
     self.assertEqual(backup['original_config_hex'], '0002000000')
     client.write_data_by_identifier.assert_called_once_with(0x0142, radar.K7_EXPERIMENTAL_CONFIG.tracks_enabled)
 
+  def test_k7_extended_session_probe_is_read_only_and_returns_to_default(self):
+    client = FakeUdsClient()
+    client.responses.update({
+      0xf100: b'YG__ SCC FHCUP      1.00 1.02 99110-F6000         ',
+      0x0142: radar.K7_EXPERIMENTAL_CONFIG.default_config,
+    })
+    client.diagnostic_session_control = Mock()
+    client.write_data_by_identifier = Mock()
+
+    code, output, panda = self.run_cli(client, '--k7-session-probe')
+
+    self.assertEqual(code, 0)
+    self.assertIn('extended diagnostic session 0x03 is readable', output)
+    self.assertEqual(client.diagnostic_session_control.call_args_list, [
+      unittest.mock.call(3),
+      unittest.mock.call(1),
+    ])
+    client.write_data_by_identifier.assert_not_called()
+    panda.close.assert_called_once_with()
+
   def test_k7_experimental_rejects_unexpected_default_without_write(self):
     client = FakeUdsClient()
     client.responses.update({
