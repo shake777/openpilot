@@ -4,6 +4,7 @@ import pytest
 
 from opendbc.car import gen_empty_fingerprint
 from opendbc.car.structs import CarParams
+import opendbc.car.hyundai.interface as interface_module
 from opendbc.car.fw_versions import build_fw_dict
 from opendbc.car.hyundai.interface import CarInterface
 from opendbc.car.hyundai.hyundaicanfd import CanBus
@@ -44,6 +45,24 @@ CANFD_EXPECTED_ECUS = {Ecu.fwdCamera, Ecu.fwdRadar}
 
 
 class TestHyundaiFingerprint:
+  def test_scc_only_radar_does_not_enable_longitudinal(self, monkeypatch):
+    class FakeParams:
+      def get_int(self, key):
+        return -1 if key == "EnableRadarTracks" else 0
+
+      def get_bool(self, key):
+        return False
+
+    monkeypatch.setattr(interface_module, "Params", FakeParams)
+    fingerprint = gen_empty_fingerprint()
+    fingerprint[0][0x420] = 8
+
+    CP = CarInterface.get_params(CAR.KIA_K7, fingerprint, [], False, False)
+
+    assert not CP.radarUnavailable
+    assert not CP.openpilotLongitudinalControl
+    assert not CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.LONG.value
+
   def test_feature_detection(self):
     # LKA steering
     for lka_steering in (True, False):

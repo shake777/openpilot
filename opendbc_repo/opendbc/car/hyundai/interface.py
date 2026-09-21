@@ -194,6 +194,10 @@ class CarInterface(CarInterfaceBase):
 
     # carrot, if camera_scc enabled, enable openpilotLongitudinalControl
     enable_radar_tracks = params.get_int("EnableRadarTracks")
+    if enable_radar_tracks == -1:
+      # SCC-only mode uses the stock SCC11 object as a read-only RadarPoint.
+      # It does not require raw 0x500 tracks, ECU diagnostics, or openpilot longitudinal control.
+      ret.radarUnavailable = False
     if ret.flags & HyundaiFlags.CAMERA_SCC.value or enable_radar_tracks > 0 or enable_radar_tracks == -2:
       ret.radarUnavailable = False
       ret.openpilotLongitudinalControl = True if camera_scc < 3 else False
