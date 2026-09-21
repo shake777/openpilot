@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from opendbc.can import CANParser
+from opendbc.can import CANPacker, CANParser
 from opendbc.car import Bus, structs
 import opendbc.car.hyundai.hyundaicanfd as hyundaicanfd
 import opendbc.car.hyundai.radar_interface as radar_interface_module
@@ -20,6 +20,45 @@ from opendbc.car.hyundai.radar_interface import (
   deduplicate_corner_candidates,
 )
 from opendbc.car.hyundai.values import CAR, HyundaiExtFlags, HyundaiFlags
+
+
+class TestSccOnlyRadar:
+  def test_stock_scc11_publishes_read_only_radar_point(self, monkeypatch):
+    class FakeParams:
+      def get_int(self, key):
+        return -1 if key == "EnableRadarTracks" else 0
+
+    monkeypatch.setattr(radar_interface_module, "Params", FakeParams)
+    cp = structs.CarParams()
+    cp.carFingerprint = CAR.KIA_K7
+    cp.flags = 0
+    cp.extFlags = 0
+    cp.radarUnavailable = False
+    cp.safetyConfigs = [structs.CarParams.SafetyConfig()]
+    radar_interface = RadarInterface(cp)
+    packer = CANPacker(radar_interface_module.DBC[cp.carFingerprint][Bus.pt])
+    scc11 = packer.make_can_msg("SCC11", 0, {
+      "ACC_ObjStatus": 1,
+      "ACC_ObjDist": 42.3,
+      "ACC_ObjRelSpd": -2.4,
+      "ACC_ObjLatPos": 0.7,
+    })
+
+    radar_data = None
+    for _ in range(10):
+      updated = radar_interface.update([0, [scc11]])
+      if updated is not None:
+        radar_data = updated
+
+    assert radar_data is not None
+    assert not radar_interface.radar_tracks
+    assert not radar_interface.radar_off_can
+    point = next(point for point in radar_data.points if point.trackId == 0)
+    assert point.radarSource == "scc"
+    assert point.measured
+    assert point.dRel == pytest.approx(42.3)
+    assert point.yRel == pytest.approx(-0.7)
+    assert point.vRel == pytest.approx(-2.4)
 
 
 class TestMandoRadar:

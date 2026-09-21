@@ -18,13 +18,15 @@ A radar fitted to the vehicle does not guarantee that carrotpilot can read the r
 | Value | Current code behavior | Guidance |
 |---:|---|---|
 | `-2` | VOACC vision-only experiment | Development testing only |
-| `-1` | Always use SCC range and relative speed without vision matching; use vision if SCC is absent | Confirm the vehicle configuration |
+| `-1` | Read the stock SCC11 range and relative speed as one radar point without vision matching; use vision if SCC is absent | Confirm the vehicle configuration |
 | `0` | Match SCC to vision; use vision if matching fails | Default |
 | `1` | Match raw front-radar tracks to vision without SCC; use vision if matching fails | Requires vehicle-specific activation and message support |
 | `2` | Match front-radar tracks and low-speed SCC to vision; use vision if matching fails | Test only on an identical validated configuration |
 | `3` | Match front radar to vision first; if it fails, always use SCC, then vision if SCC is absent | Experimental; false detections are possible |
 
 On non-CAN FD Hyundai/Kia vehicles, a positive value attempts to enable radar tracks during startup and stores the result in `EnableRadarTracksResult`. Confirm both the activation result and actual incoming tracks; physical radar presence alone is not enough.
+
+Unlike positive modes, `-1` does not change the ECU diagnostic session or radar configuration and does not automatically enable openpilot longitudinal control. It keeps stock SCC/AEB and only reads the single SCC11 lead range, relative speed, and lateral position.
 
 Legacy Mando front radars use the base 32 slots at `0x500–0x51F` for timing and CAN validity, and automatically consume the additional 32 slots at `0x520–0x53F` when the vehicle transmits them. The upper bank is optional, so it does not delay publication or invalidate CAN on a 32-slot vehicle; an upper-bank slot that stops arriving is removed on the next radar cycle.
 
