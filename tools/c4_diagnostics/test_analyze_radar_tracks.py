@@ -20,6 +20,10 @@ class TestAnalyzeRadarTracks(unittest.TestCase):
       result = analyze(path)
       self.assertEqual(result['stages'], {'all': 4, 'received': 3, 'bus_1': 2, 'track_range': 1, 'track_dlc': 0})
       self.assertEqual(result['source_counts'], {'0': 1, '1': 2, '130': 1})
+      self.assertEqual(result['received_range_by_bus'], {
+        '0': {'0x500': {'count': 1, 'dlc_counts': {'1': 1}}},
+        '1': {'0x507': {'count': 1, 'dlc_counts': {'4': 1}}},
+      })
       self.assertEqual(result['verdict'], 'no_radar_tracks_present')
 
   def test_upper_bank_is_not_discarded_or_declared_confirmed(self):

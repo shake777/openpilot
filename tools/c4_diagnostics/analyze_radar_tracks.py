@@ -12,12 +12,15 @@ def analyze(path: Path) -> dict:
   stages = Counter()
   sources = Counter()
   addresses = defaultdict(list)
+  received_range = defaultdict(lambda: defaultdict(Counter))
   for mono_time, address, source, data in iter_records(path):
     stages['all'] += 1
     sources[source] += 1
     if source >= 0x80:
       continue
     stages['received'] += 1
+    if 0x500 <= address <= 0x53f:
+      received_range[source][address][len(data)] += 1
     if source != 1:
       continue
     stages['bus_1'] += 1
@@ -43,8 +46,19 @@ def analyze(path: Path) -> dict:
     'file': path.name,
     'stages': {name: stages[name] for name in ('all', 'received', 'bus_1', 'track_range', 'track_dlc')},
     'source_counts': {str(source): count for source, count in sorted(sources.items())},
+    'received_range_by_bus': {
+      str(source): {
+        f'0x{address:03x}': {
+          'count': sum(dlc_counts.values()),
+          'dlc_counts': {str(dlc): count for dlc, count in sorted(dlc_counts.items())},
+        }
+        for address, dlc_counts in sorted(source_addresses.items())
+      }
+      for source, source_addresses in sorted(received_range.items())
+    },
     'addresses': by_address,
     'verdict': 'no_radar_tracks_present' if not addresses else 'track_frames_present_unvalidated',
+    'interpretation': '0x500-0x53f is a numeric range, not proof of radar tracks; verify bus, DLC, payload and DBC',
   }
 
 
