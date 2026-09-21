@@ -201,6 +201,63 @@ class RadarInventoryTests(unittest.TestCase):
     client.write_data_by_identifier.assert_not_called()
     panda.close.assert_called_once_with()
 
+  def test_k7_security_probe_requests_one_seed_without_key_or_write(self):
+    client = FakeUdsClient()
+    client.responses.update({
+      0xf100: b'YG__ SCC FHCUP      1.00 1.02 99110-F6000         ',
+      0x0142: radar.K7_EXPERIMENTAL_CONFIG.default_config,
+    })
+    client.diagnostic_session_control = Mock()
+    client.security_access = Mock(return_value=b'\x12\x34\x56\x78')
+    client.write_data_by_identifier = Mock()
+
+    code, output, panda = self.run_cli(client, '--k7-security-probe')
+
+    self.assertEqual(code, 0)
+    self.assertIn('security seed request accepted (4 bytes); no key was sent', output)
+    self.assertEqual(client.requests, [0xf100, 0x0142, 0x0142, 0x0142])
+    client.security_access.assert_called_once_with(0x01)
+    client.write_data_by_identifier.assert_not_called()
+    self.assertEqual(client.diagnostic_session_control.call_args_list, [
+      unittest.mock.call(3), unittest.mock.call(1),
+    ])
+    panda.close.assert_called_once_with()
+
+  def test_k7_security_probe_rejection_still_verifies_factory_value(self):
+    client = FakeUdsClient()
+    client.responses.update({
+      0xf100: b'YG__ SCC FHCUP      1.00 1.02 99110-F6000         ',
+      0x0142: radar.K7_EXPERIMENTAL_CONFIG.default_config,
+    })
+    client.diagnostic_session_control = Mock()
+    client.security_access = Mock(side_effect=NegativeResponseError('sub-function not supported', 0x27, 0x12))
+    client.write_data_by_identifier = Mock()
+
+    code, output, _ = self.run_cli(client, '--k7-security-probe')
+
+    self.assertEqual(code, 2)
+    self.assertIn('security seed request rejected', output)
+    self.assertIn('post-probe config: 0x0002000000', output)
+    client.security_access.assert_called_once_with(0x01)
+    client.write_data_by_identifier.assert_not_called()
+    self.assertEqual(client.diagnostic_session_control.call_args_list, [
+      unittest.mock.call(3), unittest.mock.call(1),
+    ])
+
+  def test_k7_security_probe_rejects_other_firmware_before_session(self):
+    client = FakeUdsClient()
+    client.security_access = Mock()
+    client.diagnostic_session_control = Mock()
+    client.write_data_by_identifier = Mock()
+
+    code, output, _ = self.run_cli(client, '--k7-security-probe')
+
+    self.assertEqual(code, 2)
+    self.assertIn('firmware identity mismatch', output)
+    client.security_access.assert_not_called()
+    client.diagnostic_session_control.assert_not_called()
+    client.write_data_by_identifier.assert_not_called()
+
   def test_k7_experimental_rejects_unexpected_default_without_write(self):
     client = FakeUdsClient()
     client.responses.update({

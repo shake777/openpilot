@@ -160,6 +160,8 @@ if __name__ == "__main__":
                       help='explicitly test K7 99110-F6000 candidate; saves and verifies the original configuration')
   parser.add_argument('--k7-session-probe', action="store_true", default=False,
                       help='read-only probe of the standard extended diagnostic session on the exact K7 radar')
+  parser.add_argument('--k7-security-probe', action="store_true", default=False,
+                      help='request one security level 0x01 seed on the exact K7 radar; never send a key or write configuration')
   parser.add_argument('--backup-path', default=str(K7_BACKUP_PATH), help=argparse.SUPPRESS)
   parser.add_argument('--scan-config-dids', action="store_true", default=False,
                       help='with --read-only, scan manufacturer DIDs 0x0100-0x01ff after 0x0142 fails')
@@ -170,12 +172,14 @@ if __name__ == "__main__":
 
   if args.scan_config_dids and not args.read_only:
     parser.error('--scan-config-dids requires --read-only')
-  if args.inventory_only and (args.read_only or args.scan_config_dids or args.default or args.k7_session_probe):
+  if args.inventory_only and (args.read_only or args.scan_config_dids or args.default or args.k7_session_probe or args.k7_security_probe):
     parser.error('--inventory-only cannot be combined with other diagnostic modes')
-  if args.k7_experimental and (args.read_only or args.inventory_only or args.scan_config_dids or args.k7_session_probe):
+  if args.k7_experimental and (args.read_only or args.inventory_only or args.scan_config_dids or args.k7_session_probe or args.k7_security_probe):
     parser.error('--k7-experimental cannot be combined with read-only options')
-  if args.k7_session_probe and (args.read_only or args.scan_config_dids or args.default):
+  if args.k7_session_probe and (args.read_only or args.scan_config_dids or args.default or args.k7_security_probe):
     parser.error('--k7-session-probe is a standalone read-only mode')
+  if args.k7_security_probe and (args.read_only or args.scan_config_dids or args.default):
+    parser.error('--k7-security-probe is a standalone no-write mode')
 
   if args.debug:
     carlog.setLevel('DEBUG')
@@ -207,8 +211,8 @@ if __name__ == "__main__":
     print("inventory-only mode did not change diagnostic session and made no writes")
     sys.exit(0 if inventory['complete'] else 2)
 
-  if args.k7_session_probe:
-    print("\n[K7 READ-ONLY EXTENDED SESSION PROBE]")
+  if args.k7_session_probe or args.k7_security_probe:
+    print("\n[K7 EXTENDED SESSION PROBE]")
     result = 2
     entered_extended_session = False
     try:
@@ -227,7 +231,21 @@ if __name__ == "__main__":
         extended_config = uds_client.read_data_by_identifier(0x0142)
         print(f"extended-session config: 0x{extended_config.hex()}")
         print("K7 extended diagnostic session 0x03 is readable; no configuration write was attempted")
-        result = 0
+        if args.k7_security_probe:
+          print("[REQUEST SECURITY LEVEL 0x01 SEED ONCE]")
+          try:
+            seed = uds_client.security_access(0x01)
+            print(f"K7 security seed request accepted ({len(seed)} bytes); no key was sent")
+            result = 0
+          except (MessageTimeoutError, NegativeResponseError) as error:
+            print(f"K7 security seed request rejected: {error}; no key was sent")
+          verified_config = uds_client.read_data_by_identifier(0x0142)
+          print(f"post-probe config: 0x{verified_config.hex()}")
+          if verified_config != K7_EXPERIMENTAL_CONFIG.default_config:
+            print("K7 configuration changed unexpectedly; do not start or drive the vehicle")
+            result = 3
+        else:
+          result = 0
     except (MessageTimeoutError, NegativeResponseError) as error:
       print(f"K7 extended diagnostic session probe failed: {error}")
       print("session probe made no configuration write")
