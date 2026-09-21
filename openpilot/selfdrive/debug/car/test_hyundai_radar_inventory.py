@@ -4,7 +4,9 @@ import io
 import json
 import runpy
 import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -153,6 +155,65 @@ class RadarInventoryTests(unittest.TestCase):
           client.write_data_by_identifier.assert_not_called()
         else:
           client.write_data_by_identifier.assert_called_once_with(0x0142, expected)
+
+  def test_k7_experimental_candidate_is_exactly_guarded_and_verified(self):
+    client = FakeUdsClient()
+    fw = b'YG__ SCC FHCUP      1.00 1.02 99110-F6000         '
+    client.responses.update({0xf100: fw, 0x0142: radar.K7_EXPERIMENTAL_CONFIG.default_config})
+    client.diagnostic_session_control = Mock()
+
+    def write_config(data_id, value):
+      self.assertEqual(data_id, 0x0142)
+      client.responses[data_id] = value
+
+    client.write_data_by_identifier = Mock(side_effect=write_config)
+    with tempfile.TemporaryDirectory() as temp_dir:
+      backup_path = Path(temp_dir) / 'k7-backup.json'
+      code, output, _ = self.run_cli(client, '--k7-experimental', '--backup-path', str(backup_path))
+      backup = json.loads(backup_path.read_text(encoding='utf-8'))
+
+    self.assertEqual(code, 0)
+    self.assertIn('K7 readback verified: 0x0002000001', output)
+    self.assertEqual(backup['original_config_hex'], '0002000000')
+    client.write_data_by_identifier.assert_called_once_with(0x0142, radar.K7_EXPERIMENTAL_CONFIG.tracks_enabled)
+
+  def test_k7_experimental_rejects_unexpected_default_without_write(self):
+    client = FakeUdsClient()
+    client.responses.update({
+      0xf100: b'YG__ SCC FHCUP      1.00 1.02 99110-F6000         ',
+      0x0142: b'\x00\x02\x00\x99\x00',
+    })
+    client.diagnostic_session_control = Mock()
+    client.write_data_by_identifier = Mock()
+    code, output, _ = self.run_cli(client, '--k7-experimental')
+    self.assertEqual(code, 1)
+    self.assertIn('does not match the measured factory value', output)
+    client.write_data_by_identifier.assert_not_called()
+
+  def test_k7_experimental_readback_mismatch_restores_original(self):
+    client = FakeUdsClient()
+    original = radar.K7_EXPERIMENTAL_CONFIG.default_config
+    client.responses.update({
+      0xf100: b'YG__ SCC FHCUP      1.00 1.02 99110-F6000         ',
+      0x0142: original,
+    })
+    client.diagnostic_session_control = Mock()
+
+    def write_config(data_id, value):
+      if value == original:
+        client.responses[data_id] = value
+
+    client.write_data_by_identifier = Mock(side_effect=write_config)
+    with tempfile.TemporaryDirectory() as temp_dir:
+      code, output, _ = self.run_cli(
+        client, '--k7-experimental', '--backup-path', str(Path(temp_dir) / 'k7-backup.json'))
+
+    self.assertEqual(code, 2)
+    self.assertIn('K7 restore verified: 0x0002000000', output)
+    self.assertEqual(client.write_data_by_identifier.call_args_list, [
+      unittest.mock.call(0x0142, radar.K7_EXPERIMENTAL_CONFIG.tracks_enabled),
+      unittest.mock.call(0x0142, original),
+    ])
 
 
 if __name__ == '__main__':
