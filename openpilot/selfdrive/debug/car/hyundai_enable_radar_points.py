@@ -334,21 +334,41 @@ if __name__ == "__main__":
           print(f"K7 readback mismatch: 0x{verified_config.hex()}; restoring original configuration")
           raise ValueError("readback mismatch")
       except (MessageTimeoutError, NegativeResponseError, ValueError) as error:
-        print(f"K7 activation verification failed: {error}; restoring original configuration")
+        print(f"K7 activation verification failed: {error}")
         original_config = load_k7_backup(k7_backup_path)
         try:
-          uds_client.write_data_by_identifier(config_data_id, original_config)
           restored_config = uds_client.read_data_by_identifier(config_data_id)
-        except (MessageTimeoutError, NegativeResponseError) as restore_error:
-          print(f"K7 automatic restore failed: {restore_error}; do not start or drive the vehicle")
-          sys.exit(3)
+        except (MessageTimeoutError, NegativeResponseError):
+          restored_config = None
+        if restored_config != original_config:
+          print("restoring original configuration")
+          try:
+            uds_client.write_data_by_identifier(config_data_id, original_config)
+            restored_config = uds_client.read_data_by_identifier(config_data_id)
+          except (MessageTimeoutError, NegativeResponseError) as restore_error:
+            print(f"K7 automatic restore failed: {restore_error}; do not start or drive the vehicle")
+            sys.exit(3)
         if restored_config != original_config:
           print(f"K7 restore mismatch: 0x{restored_config.hex()}; do not start or drive the vehicle")
           sys.exit(3)
         print(f"K7 restore verified: 0x{restored_config.hex()}")
+        try:
+          uds_client.diagnostic_session_control(0x01)
+          print("K7 diagnostic session returned to default 0x01")
+        except (MessageTimeoutError, NegativeResponseError) as session_error:
+          print(f"K7 default-session return failed: {session_error}; fully power off the vehicle before further testing")
+          sys.exit(3)
         sys.exit(2)
     else:
       uds_client.write_data_by_identifier(config_data_id, new_config)
+
+    if k7_experimental:
+      try:
+        uds_client.diagnostic_session_control(0x01)
+        print("K7 diagnostic session returned to default 0x01")
+      except (MessageTimeoutError, NegativeResponseError) as error:
+        print(f"K7 default-session return failed: {error}; fully power off the vehicle before further testing")
+        sys.exit(3)
 
     print("[DONE]")
     print("\nrestart your vehicle and ensure there are no faults")

@@ -175,7 +175,10 @@ class RadarInventoryTests(unittest.TestCase):
     self.assertEqual(code, 0)
     self.assertIn('K7 readback verified: 0x0002000001', output)
     self.assertEqual(backup['original_config_hex'], '0002000000')
-    client.diagnostic_session_control.assert_called_once_with(3)
+    self.assertEqual(client.diagnostic_session_control.call_args_list, [
+      unittest.mock.call(3),
+      unittest.mock.call(1),
+    ])
     client.write_data_by_identifier.assert_called_once_with(0x0142, radar.K7_EXPERIMENTAL_CONFIG.tracks_enabled)
 
   def test_k7_extended_session_probe_is_read_only_and_returns_to_default(self):
@@ -223,6 +226,8 @@ class RadarInventoryTests(unittest.TestCase):
     def write_config(data_id, value):
       if value == original:
         client.responses[data_id] = value
+      else:
+        client.responses[data_id] = b'\xff' * len(original)
 
     client.write_data_by_identifier = Mock(side_effect=write_config)
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -234,6 +239,27 @@ class RadarInventoryTests(unittest.TestCase):
     self.assertEqual(client.write_data_by_identifier.call_args_list, [
       unittest.mock.call(0x0142, radar.K7_EXPERIMENTAL_CONFIG.tracks_enabled),
       unittest.mock.call(0x0142, original),
+    ])
+
+  def test_k7_rejected_write_verifies_original_without_rewriting_it(self):
+    client = FakeUdsClient()
+    original = radar.K7_EXPERIMENTAL_CONFIG.default_config
+    client.responses.update({
+      0xf100: b'YG__ SCC FHCUP      1.00 1.02 99110-F6000         ',
+      0x0142: original,
+    })
+    client.diagnostic_session_control = Mock()
+    client.write_data_by_identifier = Mock(side_effect=NegativeResponseError('denied', 0x2e, 0x31))
+    with tempfile.TemporaryDirectory() as temp_dir:
+      code, output, _ = self.run_cli(
+        client, '--k7-experimental', '--backup-path', str(Path(temp_dir) / 'k7-backup.json'))
+
+    self.assertEqual(code, 2)
+    self.assertIn('K7 restore verified: 0x0002000000', output)
+    client.write_data_by_identifier.assert_called_once_with(0x0142, radar.K7_EXPERIMENTAL_CONFIG.tracks_enabled)
+    self.assertEqual(client.diagnostic_session_control.call_args_list, [
+      unittest.mock.call(3),
+      unittest.mock.call(1),
     ])
 
 
