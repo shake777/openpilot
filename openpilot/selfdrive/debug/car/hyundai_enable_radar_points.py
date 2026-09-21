@@ -237,6 +237,7 @@ if __name__ == "__main__":
     report = {"schema": "c4-k7-security-probe-v1", "created_at": time.time(), "status": "not_attempted",
               "write_performed": False, "key_sent": False, "firmware_hex": None,
               "default_config_hex": None, "extended_config_hex": None, "post_config_hex": None,
+              "post_restore_config_hex": None, "final_config_verified": False,
               "security_level": "0x01", "seed_length": None, "default_session_restored": None}
     try:
       fw_version = uds_client.read_data_by_identifier(0xf100)
@@ -275,6 +276,8 @@ if __name__ == "__main__":
             except (MessageTimeoutError, NegativeResponseError) as error:
               report["status"] = "seed_rejected"
               report["error"] = str(error)
+              if isinstance(error, NegativeResponseError):
+                report["seed_nrc"] = f"0x{error.error_code:02x}"
               print(f"K7 security seed request rejected: {error}; no key was sent")
             verified_config = uds_client.read_data_by_identifier(0x0142)
             report["post_config_hex"] = verified_config.hex()
@@ -294,12 +297,24 @@ if __name__ == "__main__":
       if entered_extended_session:
         try:
           uds_client.diagnostic_session_control(0x01)
-          report["default_session_restored"] = True
-          print("K7 diagnostic session returned to default 0x01")
         except (MessageTimeoutError, NegativeResponseError) as error:
           report["default_session_restored"] = False
+          report["status"] = "restore_unverified"
           print(f"K7 default-session return failed: {error}; fully power off the vehicle before further testing")
           result = 3
+        else:
+          report["default_session_restored"] = True
+          print("K7 diagnostic session returned to default 0x01")
+          try:
+            restored_config = uds_client.read_data_by_identifier(0x0142)
+            report["post_restore_config_hex"] = restored_config.hex()
+            report["final_config_verified"] = restored_config == K7_EXPERIMENTAL_CONFIG.default_config
+          except (MessageTimeoutError, NegativeResponseError) as error:
+            report["error"] = str(error)
+          if not report["final_config_verified"]:
+            report["status"] = "restore_unverified"
+            print("K7 default-session configuration could not be verified; do not drive the vehicle")
+            result = 3
       panda.close()
       if args.k7_security_probe:
         try:
