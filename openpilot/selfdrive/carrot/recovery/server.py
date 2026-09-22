@@ -112,6 +112,7 @@ TOOL_ACTIONS = {
   "send_tmux_log",
   "server_tmux_log",
   "k7_parked_probe",
+  "k7_parked_characterize",
 }
 
 TMUX_LOG_PATH = "/data/media/tmux.log"
@@ -762,6 +763,8 @@ def _capture_tmux_log() -> tuple[int, str]:
 def _tool_action(action: str, payload: dict) -> dict:
   if action == "k7_parked_probe":
     return {"ok": True, "command": "cd /data/openpilot && python3 tools/c4_diagnostics/parked_probe.py --from-recovery"}
+  if action == "k7_parked_characterize":
+    return {"ok": True, "command": "cd /data/openpilot && python3 tools/c4_diagnostics/parked_probe.py --from-recovery --characterize"}
   if action == "rebuild_all":
     # Same as the tools button: clean build + drop prebuilt, then reboot.
     # Returned as a command so it runs in the visible PTY (like the git menu).
@@ -2060,6 +2063,7 @@ HTML_PAGE = """<!doctype html>
                 <button data-tool="send_tmux_log">download tmux log</button>
                 <button data-tool="server_tmux_log">send tmux log</button>
                 <button data-tool="k7_parked_probe">K7 parked radar probe</button>
+                <button data-tool="k7_parked_characterize">K7 radar read-only scan</button>
                 <button data-tool="rebuild_all" class="danger">rebuild</button>
                 <button data-act="git_reboot" class="danger">reboot</button>
               </div>
@@ -2339,6 +2343,12 @@ RECOVERY_JS = """\"use strict\";
     if (action === \"k7_parked_probe\") {
       if (await appConfirm(\"K7 only. Park, set the parking brake, turn the engine OFF, and leave ignition ON. The comma service will restart. Do not drive until the uploaded result is reviewed.\", { title: \"K7 parked radar probe\", confirmLabel: \"Run probe\" })) {
         await dispatchGit(\"k7_parked_probe\");
+      }
+      return;
+    }
+    if (action === \"k7_parked_characterize\") {
+      if (await appConfirm(\"K7 only. Park, set the parking brake, turn the engine OFF, and leave ignition ON. This reads bounded radar identifiers and fault status without a security request or configuration write. The comma service will restart. Do not drive until the uploaded result is reviewed.\", { title: \"K7 radar read-only scan\", confirmLabel: \"Run scan\" })) {
+        await dispatchGit(\"k7_parked_characterize\");
       }
       return;
     }
