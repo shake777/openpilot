@@ -27,6 +27,7 @@ class NegativeResponseError(Exception):
 class FakeUdsClient:
   def __init__(self):
     self.requests = []
+    self.tester_present = Mock()
     # 응답 형식 검사용 합성값이며 K7 실차 측정값이 아니다.
     self.responses = {
       0xf100: b'YG__ SCC F-CUP      1.00 1.02 99110-F6000         ',
@@ -254,6 +255,7 @@ class RadarInventoryTests(unittest.TestCase):
     self.assertNotIn('12345678', json.dumps(report))
     self.assertEqual(client.requests, [0xf100, 0x0142, 0x0142, 0xf186, 0x0142, 0x0142])
     client.security_access.assert_called_once_with(0x01)
+    client.tester_present.assert_called_once_with()
     client.write_data_by_identifier.assert_not_called()
     self.assertEqual(client.diagnostic_session_control.call_args_list, [
       unittest.mock.call(3), unittest.mock.call(1),
@@ -289,6 +291,30 @@ class RadarInventoryTests(unittest.TestCase):
     self.assertEqual(client.diagnostic_session_control.call_args_list, [
       unittest.mock.call(3), unittest.mock.call(1),
     ])
+
+  def test_k7_security_probe_keepalive_failure_skips_seed(self):
+    client = FakeUdsClient()
+    client.responses.update({
+      0xf100: b'YG__ SCC FHCUP      1.00 1.02 99110-F6000         ',
+      0x0142: radar.K7_EXPERIMENTAL_CONFIG.default_config,
+    })
+    client.diagnostic_session_control = Mock()
+    client.tester_present.side_effect = NegativeResponseError('conditions not correct', 0x3e, 0x22)
+    client.security_access = Mock()
+    client.write_data_by_identifier = Mock()
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      report_path = Path(temp_dir) / 'k7-security-probe-test.json'
+      code, _, _ = self.run_cli(client, '--k7-security-probe', '--probe-output', str(report_path))
+      report = json.loads(report_path.read_text(encoding='utf-8'))
+
+    self.assertEqual(code, 4)
+    self.assertEqual(report['status'], 'session_unverified')
+    self.assertEqual(report['errors'][-1]['stage'], 'session_keepalive')
+    self.assertEqual(report['errors'][-1]['nrc'], '0x22')
+    self.assertTrue(report['final_config_verified'])
+    client.security_access.assert_not_called()
+    client.write_data_by_identifier.assert_not_called()
 
   def test_k7_security_probe_skips_seed_without_confirmed_session(self):
     client = FakeUdsClient()

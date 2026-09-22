@@ -318,23 +318,32 @@ if __name__ == "__main__":
                 session_verified = True
                 report["session_confirmation_source"] = "f186"
             if session_verified:
-              print("[REQUEST SECURITY LEVEL 0x01 SEED ONCE]")
               try:
-                seed = uds_client.security_access(0x01)
-                report["status"] = "seed_accepted"
-                report["seed_length"] = len(seed)
-                print(f"K7 security seed request accepted ({len(seed)} bytes); no key was sent")
-                result = 0
+                uds_client.tester_present()
               except (MessageTimeoutError, NegativeResponseError) as error:
-                record_error("seed", error)
-                if isinstance(error, NegativeResponseError):
-                  report["status"] = "seed_rejected"
-                  report["seed_nrc"] = f"0x{error.error_code:02x}"
-                  result = 2
-                else:
-                  report["status"] = "seed_timeout"
-                  result = 5
-                print(f"K7 security seed request rejected: {error}; no key was sent")
+                record_error("session_keepalive", error)
+                report["status"] = "session_unverified"
+                result = 4
+                print("K7 session keepalive failed; security seed was not requested")
+              else:
+                report["session_keepalive_confirmed"] = True
+                print("[REQUEST SECURITY LEVEL 0x01 SEED ONCE]")
+                try:
+                  seed = uds_client.security_access(0x01)
+                  report["status"] = "seed_accepted"
+                  report["seed_length"] = len(seed)
+                  print(f"K7 security seed request accepted ({len(seed)} bytes); no key was sent")
+                  result = 0
+                except (MessageTimeoutError, NegativeResponseError) as error:
+                  record_error("seed", error)
+                  if isinstance(error, NegativeResponseError):
+                    report["status"] = "seed_rejected"
+                    report["seed_nrc"] = f"0x{error.error_code:02x}"
+                    result = 2
+                  else:
+                    report["status"] = "seed_timeout"
+                    result = 5
+                  print(f"K7 security seed request rejected: {error}; no key was sent")
               try:
                 verified_config = uds_client.read_data_by_identifier(0x0142)
                 report["post_config_hex"] = verified_config.hex()
