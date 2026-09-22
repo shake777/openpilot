@@ -180,6 +180,8 @@ if __name__ == "__main__":
                       help='request one security level 0x01 seed on the exact K7 radar; never send a key or write configuration')
   parser.add_argument('--k7-characterize', action='store_true',
                       help='read bounded K7 identity/configuration/DTC data; no session change, seed, key or write')
+  parser.add_argument('--compare-sessions', action='store_true',
+                      help='with --k7-characterize, compare reads in standard extended session and return to default')
   parser.add_argument('--probe-output', type=Path, default=None, help=argparse.SUPPRESS)
   parser.add_argument('--backup-path', default=str(K7_BACKUP_PATH), help=argparse.SUPPRESS)
   parser.add_argument('--scan-config-dids', action="store_true", default=False,
@@ -188,6 +190,9 @@ if __name__ == "__main__":
   parser.add_argument('--bus', type=int, default=0, help='can bus to use (default: 0)')
   args = parser.parse_args()
   k7_backup_path = Path(args.backup_path)
+
+  if args.compare_sessions and not args.k7_characterize:
+    parser.error('--compare-sessions requires --k7-characterize')
 
   if args.k7_characterize and any((args.default, args.read_only, args.inventory_only, args.k7_experimental,
                                  args.k7_session_probe, args.k7_security_probe, args.scan_config_dids)):
@@ -230,11 +235,11 @@ if __name__ == "__main__":
 
     uds_client.response_pending_timeout = 2
     try:
-      report, result = characterize(uds_client, bus=args.bus)
+      report, result = characterize(uds_client, bus=args.bus, compare_sessions=args.compare_sessions)
       report_path = save_k7_security_probe_report(report, args.probe_output)
       print(json.dumps(report, ensure_ascii=False, sort_keys=True))
       print(f'K7 characterization saved for automatic upload: {report_path}')
-      print('No diagnostic session change, seed request, key, configuration write or DTC clear was sent.')
+      print('No seed request, key, configuration write or DTC clear was sent.')
     finally:
       panda.close()
     sys.exit(result)

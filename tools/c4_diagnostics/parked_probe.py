@@ -37,7 +37,7 @@ def vehicle_ready_for_probe():
   return False
 
 
-def start_from_web(characterize=False, from_recovery=False):
+def start_from_web(characterize=False, from_recovery=False, compare_sessions=False):
   if not Path("/AGNOS").exists() or not PROBE.is_file():
     print("C4 AGNOS or radar probe script not found; nothing was started")
     return 2
@@ -56,6 +56,8 @@ def start_from_web(characterize=False, from_recovery=False):
     command.append('--verify-parked')
   if characterize:
     command.append('--characterize')
+  if compare_sessions:
+    command.append('--compare-sessions')
   result = run_command(command)
   if result.returncode:
     print("Could not start isolated probe unit; comma service was not stopped")
@@ -84,13 +86,16 @@ def probe_report_path():
   return spool / f"k7-security-probe-{uuid.uuid4()}.json"
 
 
-def probe_command(report_path, characterize=False):
-  return ["runuser", "-u", "comma", "--", "/usr/bin/env",
+def probe_command(report_path, characterize=False, compare_sessions=False):
+  command = ["runuser", "-u", "comma", "--", "/usr/bin/env",
           f"PYTHONPATH={ROOT}:/data/pythonpath", sys.executable, str(PROBE),
           "--k7-characterize" if characterize else "--k7-security-probe", "--probe-output", str(report_path)]
+  if compare_sessions:
+    command.append('--compare-sessions')
+  return command
 
 
-def run_worker(characterize=False, verify_parked=False):
+def run_worker(characterize=False, verify_parked=False, compare_sessions=False):
   RESULT_DIR.mkdir(parents=True, exist_ok=True)
   status = {"started_at": time.time(), "probe_started": False, "probe_returncode": None,
             "report_path": None, "restore_status": None, "final_config_verified": None,
@@ -108,7 +113,7 @@ def run_worker(characterize=False, verify_parked=False):
       report_path = probe_report_path()
       status["report_path"] = str(report_path)
       status["probe_started"] = True
-      probe = run_command(["timeout", "--kill-after=5s", "120s", *probe_command(report_path, characterize)],
+      probe = run_command(["timeout", "--kill-after=5s", "120s", *probe_command(report_path, characterize, compare_sessions)],
                           input="OK\n", stdout=log, stderr=subprocess.STDOUT, cwd=ROOT)
       status["probe_returncode"] = probe.returncode
       if probe.returncode == 124:
@@ -121,6 +126,8 @@ def run_worker(characterize=False, verify_parked=False):
         status["final_config_verified"] = report.get("final_config_verified")
         status["report_status"] = report.get("status")
         status["dtc_changed"] = report.get("dtc_changed")
+        status["session_comparison"] = report.get("session_comparison")
+        status["comparison_complete"] = report.get("comparison_complete")
       else:
         status["error"] = status["error"] or "probe report missing; diagnostic result is unverified"
     except (OSError, ValueError, RuntimeError) as error:
@@ -144,7 +151,7 @@ def run_worker(characterize=False, verify_parked=False):
   os.chmod(upload_path, 0o644)
   if not status["comma_restarted"] or status["error"] or not status["final_config_verified"]:
     return 3
-  expected_restore = "not_needed" if characterize else "confirmed"
+  expected_restore = "not_needed" if characterize and not compare_sessions else "confirmed"
   if status["restore_status"] != expected_restore or status.get("dtc_changed"):
     return 3
   return status["probe_returncode"] if status["probe_returncode"] in (0, 2, 3, 4, 5) else 3
@@ -154,14 +161,17 @@ def main():
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
   parser.add_argument('--characterize', action='store_true', help='collect bounded identity/configuration/DTC reads without session or security requests')
+  parser.add_argument('--compare-sessions', action='store_true', help='with --characterize, compare default and extended-session reads')
   parser.add_argument('--from-recovery', action='store_true', help=argparse.SUPPRESS)
   parser.add_argument('--verify-parked', action='store_true', help=argparse.SUPPRESS)
   args = parser.parse_args()
+  if args.compare_sessions and not args.characterize:
+    parser.error('--compare-sessions requires --characterize')
   if args.worker:
     if os.geteuid() != 0:
       parser.error("worker must run as root in its own systemd unit")
-    return run_worker(args.characterize, args.verify_parked)
-  return start_from_web(args.characterize, args.from_recovery)
+    return run_worker(args.characterize, args.verify_parked, args.compare_sessions)
+  return start_from_web(args.characterize, args.from_recovery, args.compare_sessions)
 
 
 if __name__ == "__main__":

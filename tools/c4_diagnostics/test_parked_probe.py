@@ -67,6 +67,33 @@ class TestParkedProbe(unittest.TestCase):
     self.assertNotIn('--k7-security-probe', command)
     self.assertNotIn('--k7-experimental', command)
 
+  def test_session_comparison_report_is_uploaded_with_restore_status(self):
+    with TemporaryDirectory() as directory:
+      root = Path(directory)
+      report_path = root / 'spool/k7-security-probe-test.json'
+      comparison = {'0x0140': 'newly_readable'}
+
+      def run(command, **_kwargs):
+        if 'runuser' in command:
+          self.assertIn('--k7-characterize', command)
+          self.assertIn('--compare-sessions', command)
+          self.assertNotIn('--k7-security-probe', command)
+          report_path.parent.mkdir()
+          report_path.write_text(json.dumps({'restore_status': 'confirmed', 'final_config_verified': True,
+                                            'dtc_changed': False, 'session_comparison': comparison}))
+        return SimpleNamespace(returncode=0)
+
+      with patch.object(parked_probe, 'RESULT_DIR', root), patch.object(parked_probe, 'STATUS_FILE', root / 'status.json'), \
+           patch.object(parked_probe, 'LOG_FILE', root / 'probe.log'), patch.object(parked_probe, 'probe_report_path', return_value=report_path), \
+           patch.object(parked_probe, 'wait_for_pandad', return_value=True), patch.object(parked_probe.time, 'sleep'), \
+           patch.object(parked_probe, 'run_command', side_effect=run):
+        self.assertEqual(parked_probe.run_worker(characterize=True, compare_sessions=True), 0)
+      queued = pending_captures(report_path.parent, {'uploaded': {}})
+      self.assertEqual(len(queued), 2)
+      uploaded = next(json.loads(p.read_text()) for p in queued if 'status-' in p.name)
+      self.assertEqual(uploaded['worker_status']['session_comparison'], comparison)
+      self.assertTrue(uploaded['worker_status']['comma_restarted'])
+
   def test_probe_records_restore_result_and_restarts_comma(self):
     with TemporaryDirectory() as directory:
       root = Path(directory)

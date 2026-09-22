@@ -99,6 +99,22 @@ class RadarInventoryTests(unittest.TestCase):
     self.assertEqual(code, 2)
     panda.set_safety_mode.assert_not_called()
 
+  def test_session_comparison_requires_characterization(self):
+    code, _, panda = self.run_cli(FakeUdsClient(), '--compare-sessions', '--k7-security-probe')
+    self.assertEqual(code, 2)
+    panda.set_safety_mode.assert_not_called()
+
+  def test_session_comparison_cli_forwards_mode_and_saves_report(self):
+    report = {'mode': 'k7-characterize-session-comparison', 'session_comparison': {'0x0140': 'newly_readable'}}
+    with tempfile.TemporaryDirectory() as directory, \
+         patch('tools.c4_diagnostics.characterize_radar.characterize', return_value=(report, 2)) as characterize:
+      output = Path(directory) / 'report.json'
+      code, _, panda = self.run_cli(FakeUdsClient(), '--k7-characterize', '--compare-sessions', '--probe-output', str(output))
+      self.assertEqual(code, 2)
+      self.assertEqual(json.loads(output.read_text()), report)
+      self.assertTrue(characterize.call_args.kwargs['compare_sessions'])
+    panda.close.assert_called_once()
+
   def test_inventory_reads_only_f100_and_0142(self):
     client = FakeUdsClient()
 
