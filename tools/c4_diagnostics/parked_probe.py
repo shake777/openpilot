@@ -24,18 +24,36 @@ def run_command(command, **kwargs):
   return subprocess.run(command, check=False, text=True, **kwargs)
 
 
-def start_from_web(characterize=False):
+def vehicle_ready_for_probe():
+  from openpilot.cereal import messaging
+
+  sm = messaging.SubMaster(["carState", "deviceState"])
+  for _ in range(3):
+    sm.update(1000)
+    if all(sm.alive[name] and sm.valid[name] for name in ("carState", "deviceState")):
+      car = sm["carState"]
+      gear = str(car.gearShifter).lower().split(".")[-1]
+      return gear == "park" and abs(car.vEgo) < 0.1 and car.engineRpm < 1 and bool(sm["deviceState"].started)
+  return False
+
+
+def start_from_web(characterize=False, from_recovery=False):
   if not Path("/AGNOS").exists() or not PROBE.is_file():
     print("C4 AGNOS or radar probe script not found; nothing was started")
     return 2
-  answer = input("Parked, parking brake set, engine OFF and ignition ON? Type PARKED to start: ").strip()
-  if answer != "PARKED":
+  if from_recovery:
+    if not vehicle_ready_for_probe():
+      print("Parked vehicle state could not be verified; nothing was started")
+      return 2
+  elif input("Parked, parking brake set, engine OFF and ignition ON? Type PARKED to start: ").strip() != "PARKED":
     print("Cancelled; nothing was started")
     return 2
 
   unit = "c4-k7-parked-probe"
   command = ["sudo", "-n", "systemd-run", "--collect", f"--unit={unit}",
              f"--working-directory={ROOT}", "--", sys.executable, str(Path(__file__).resolve()), "--worker"]
+  if from_recovery:
+    command.append('--verify-parked')
   if characterize:
     command.append('--characterize')
   result = run_command(command)
@@ -72,13 +90,15 @@ def probe_command(report_path, characterize=False):
           "--k7-characterize" if characterize else "--k7-security-probe", "--probe-output", str(report_path)]
 
 
-def run_worker(characterize=False):
+def run_worker(characterize=False, verify_parked=False):
   RESULT_DIR.mkdir(parents=True, exist_ok=True)
   status = {"started_at": time.time(), "probe_started": False, "probe_returncode": None,
             "report_path": None, "restore_status": None, "final_config_verified": None,
             "comma_restarted": False, "error": None, "mode": "characterize" if characterize else "security_probe"}
   with LOG_FILE.open("w", encoding="utf-8") as log:
     try:
+      if verify_parked and not vehicle_ready_for_probe():
+        raise RuntimeError("parked vehicle state changed; radar probe was not run")
       stop = run_command(["systemctl", "stop", "comma"], stdout=log, stderr=subprocess.STDOUT)
       if stop.returncode:
         raise RuntimeError(f"systemctl stop comma failed: {stop.returncode}")
@@ -134,12 +154,14 @@ def main():
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
   parser.add_argument('--characterize', action='store_true', help='collect bounded identity/configuration/DTC reads without session or security requests')
+  parser.add_argument('--from-recovery', action='store_true', help=argparse.SUPPRESS)
+  parser.add_argument('--verify-parked', action='store_true', help=argparse.SUPPRESS)
   args = parser.parse_args()
   if args.worker:
     if os.geteuid() != 0:
       parser.error("worker must run as root in its own systemd unit")
-    return run_worker(args.characterize)
-  return start_from_web(args.characterize)
+    return run_worker(args.characterize, args.verify_parked)
+  return start_from_web(args.characterize, args.from_recovery)
 
 
 if __name__ == "__main__":

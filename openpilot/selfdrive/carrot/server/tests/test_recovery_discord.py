@@ -1,6 +1,13 @@
 import json
+from pathlib import Path
 
 from openpilot.selfdrive.carrot.recovery import server as recovery
+
+
+def test_recovery_k7_probe_is_one_click_command():
+  assert 'k7_parked_probe' in recovery.TOOL_ACTIONS
+  assert '--from-recovery' in recovery._tool_action('k7_parked_probe', {})['command']
+  assert 'data-tool="k7_parked_probe"' in Path(recovery.__file__).read_text(encoding='utf-8')
 
 
 class _Response:
