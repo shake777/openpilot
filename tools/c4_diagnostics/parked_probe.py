@@ -23,7 +23,7 @@ def run_command(command, **kwargs):
   return subprocess.run(command, check=False, text=True, **kwargs)
 
 
-def start_from_web():
+def start_from_web(characterize=False):
   if not Path("/AGNOS").exists() or not PROBE.is_file():
     print("C4 AGNOS or radar probe script not found; nothing was started")
     return 2
@@ -35,6 +35,8 @@ def start_from_web():
   unit = "c4-k7-parked-probe"
   command = ["sudo", "-n", "systemd-run", "--collect", f"--unit={unit}",
              f"--working-directory={ROOT}", "--", sys.executable, str(Path(__file__).resolve()), "--worker"]
+  if characterize:
+    command.append('--characterize')
   result = run_command(command)
   if result.returncode:
     print("Could not start isolated probe unit; comma service was not stopped")
@@ -63,17 +65,17 @@ def probe_report_path():
   return spool / f"k7-security-probe-{uuid.uuid4()}.json"
 
 
-def probe_command(report_path):
+def probe_command(report_path, characterize=False):
   return ["runuser", "-u", "comma", "--", "/usr/bin/env",
           f"PYTHONPATH={ROOT}:/data/pythonpath", sys.executable, str(PROBE),
-          "--k7-security-probe", "--probe-output", str(report_path)]
+          "--k7-characterize" if characterize else "--k7-security-probe", "--probe-output", str(report_path)]
 
 
-def run_worker():
+def run_worker(characterize=False):
   RESULT_DIR.mkdir(parents=True, exist_ok=True)
   status = {"started_at": time.time(), "probe_started": False, "probe_returncode": None,
             "report_path": None, "restore_status": None, "final_config_verified": None,
-            "comma_restarted": False, "error": None}
+            "comma_restarted": False, "error": None, "mode": "characterize" if characterize else "security_probe"}
   with LOG_FILE.open("w", encoding="utf-8") as log:
     try:
       stop = run_command(["systemctl", "stop", "comma"], stdout=log, stderr=subprocess.STDOUT)
@@ -85,16 +87,21 @@ def run_worker():
       report_path = probe_report_path()
       status["report_path"] = str(report_path)
       status["probe_started"] = True
-      probe = run_command(["timeout", "--kill-after=5s", "120s", *probe_command(report_path)],
+      probe = run_command(["timeout", "--kill-after=5s", "120s", *probe_command(report_path, characterize)],
                           input="OK\n", stdout=log, stderr=subprocess.STDOUT, cwd=ROOT)
       status["probe_returncode"] = probe.returncode
       if probe.returncode == 124:
-        status["error"] = "radar probe timed out; session restoration is unverified"
+        status["error"] = ("radar characterization timed out; final configuration is unverified" if characterize else
+                           "radar probe timed out; session restoration is unverified")
 
       if report_path.is_file():
         report = json.loads(report_path.read_text(encoding="utf-8"))
         status["restore_status"] = report.get("restore_status")
         status["final_config_verified"] = report.get("final_config_verified")
+        status["report_status"] = report.get("status")
+        status["dtc_changed"] = report.get("dtc_changed")
+      else:
+        status["error"] = status["error"] or "probe report missing; diagnostic result is unverified"
     except (OSError, ValueError, RuntimeError) as error:
       status["error"] = str(error)
     finally:
@@ -106,18 +113,24 @@ def run_worker():
       status["finished_at"] = time.time()
       STATUS_FILE.write_text(json.dumps(status, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
       log.write(f"\nRESULT {json.dumps(status, ensure_ascii=False)}\n")
-  return 0 if status["comma_restarted"] else 3
+  if not status["comma_restarted"] or status["error"] or not status["final_config_verified"]:
+    return 3
+  expected_restore = "not_needed" if characterize else "confirmed"
+  if status["restore_status"] != expected_restore or status.get("dtc_changed"):
+    return 3
+  return status["probe_returncode"] if status["probe_returncode"] in (0, 2, 3, 4, 5) else 3
 
 
 def main():
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
+  parser.add_argument('--characterize', action='store_true', help='collect bounded identity/configuration/DTC reads without session or security requests')
   args = parser.parse_args()
   if args.worker:
     if os.geteuid() != 0:
       parser.error("worker must run as root in its own systemd unit")
-    return run_worker()
-  return start_from_web()
+    return run_worker(args.characterize)
+  return start_from_web(args.characterize)
 
 
 if __name__ == "__main__":

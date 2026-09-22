@@ -72,6 +72,32 @@ class RadarInventoryTests(unittest.TestCase):
         code = 0
     return code, output.getvalue(), panda
 
+  def test_characterization_cli_saves_read_only_report_and_closes_panda(self):
+    from tools.c4_diagnostics.characterize_radar import CONFIG_DIDS, IDENTITY_DIDS
+
+    client = FakeUdsClient()
+    client.responses.update({did: b'\0' for did in CONFIG_DIDS + IDENTITY_DIDS})
+    client.responses.update({0xf100: b'YG__ SCC FHCUP 1.00 1.02 99110-F6000',
+                             0x0142: bytes.fromhex('0002000000'),
+                             0xf186: NegativeResponseError('unsupported', 0x22, 0x31)})
+    client.read_dtc_information = Mock(return_value=b'\xff')
+    self.uds_module.DTC_REPORT_TYPE = SimpleNamespace(DTC_BY_STATUS_MASK=2)
+    self.uds_module.DTC_STATUS_MASK_TYPE = SimpleNamespace(ALL=255)
+    with tempfile.TemporaryDirectory() as directory, patch('tools.c4_diagnostics.characterize_radar.time.sleep'):
+      output = Path(directory) / 'report.json'
+      code, _, panda = self.run_cli(client, '--k7-characterize', '--probe-output', str(output))
+      report = json.loads(output.read_text())
+    self.assertEqual(code, 2)
+    self.assertEqual(report['mode'], 'k7-characterize-no-session-change')
+    self.assertTrue(report['final_config_verified'])
+    self.assertFalse(report['seed_requested'])
+    panda.close.assert_called_once()
+
+  def test_characterization_cli_rejects_write_mode_combination(self):
+    code, _, panda = self.run_cli(FakeUdsClient(), '--k7-characterize', '--k7-experimental')
+    self.assertEqual(code, 2)
+    panda.set_safety_mode.assert_not_called()
+
   def test_inventory_reads_only_f100_and_0142(self):
     client = FakeUdsClient()
 

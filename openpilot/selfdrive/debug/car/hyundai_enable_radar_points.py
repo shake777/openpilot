@@ -178,6 +178,8 @@ if __name__ == "__main__":
                       help='read-only probe of the standard extended diagnostic session on the exact K7 radar')
   parser.add_argument('--k7-security-probe', action="store_true", default=False,
                       help='request one security level 0x01 seed on the exact K7 radar; never send a key or write configuration')
+  parser.add_argument('--k7-characterize', action='store_true',
+                      help='read bounded K7 identity/configuration/DTC data; no session change, seed, key or write')
   parser.add_argument('--probe-output', type=Path, default=None, help=argparse.SUPPRESS)
   parser.add_argument('--backup-path', default=str(K7_BACKUP_PATH), help=argparse.SUPPRESS)
   parser.add_argument('--scan-config-dids', action="store_true", default=False,
@@ -187,6 +189,9 @@ if __name__ == "__main__":
   args = parser.parse_args()
   k7_backup_path = Path(args.backup_path)
 
+  if args.k7_characterize and any((args.default, args.read_only, args.inventory_only, args.k7_experimental,
+                                 args.k7_session_probe, args.k7_security_probe, args.scan_config_dids)):
+    parser.error('--k7-characterize is a standalone no-write mode')
   if args.scan_config_dids and not args.read_only:
     parser.error('--scan-config-dids requires --read-only')
   if args.inventory_only and (args.read_only or args.scan_config_dids or args.default or args.k7_session_probe or args.k7_security_probe):
@@ -197,8 +202,8 @@ if __name__ == "__main__":
     parser.error('--k7-session-probe is a standalone read-only mode')
   if args.k7_security_probe and (args.read_only or args.scan_config_dids or args.default):
     parser.error('--k7-security-probe is a standalone no-write mode')
-  if args.probe_output is not None and not args.k7_security_probe:
-    parser.error('--probe-output requires --k7-security-probe')
+  if args.probe_output is not None and not (args.k7_security_probe or args.k7_characterize):
+    parser.error('--probe-output requires --k7-security-probe or --k7-characterize')
 
   if args.debug:
     carlog.setLevel('DEBUG')
@@ -219,6 +224,20 @@ if __name__ == "__main__":
   panda = Panda()
   panda.set_safety_mode(CarParams.SafetyModel.elm327)
   uds_client = UdsClient(panda, 0x7D0, bus=args.bus)
+
+  if args.k7_characterize:
+    from tools.c4_diagnostics.characterize_radar import characterize
+
+    uds_client.response_pending_timeout = 2
+    try:
+      report, result = characterize(uds_client, bus=args.bus)
+      report_path = save_k7_security_probe_report(report, args.probe_output)
+      print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+      print(f'K7 characterization saved for automatic upload: {report_path}')
+      print('No diagnostic session change, seed request, key, configuration write or DTC clear was sent.')
+    finally:
+      panda.close()
+    sys.exit(result)
 
   if args.inventory_only:
     print("\n[STRICT READ-ONLY RADAR INVENTORY]")

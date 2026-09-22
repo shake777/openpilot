@@ -10,6 +10,12 @@ from tools.c4_diagnostics import parked_probe
 
 
 class TestParkedProbe(unittest.TestCase):
+  def test_characterize_command_cannot_select_security_or_write_mode(self):
+    command = parked_probe.probe_command(Path('/tmp/report.json'), characterize=True)
+    self.assertIn('--k7-characterize', command)
+    self.assertNotIn('--k7-security-probe', command)
+    self.assertNotIn('--k7-experimental', command)
+
   def test_probe_records_restore_result_and_restarts_comma(self):
     with TemporaryDirectory() as directory:
       root = Path(directory)
@@ -52,7 +58,7 @@ class TestParkedProbe(unittest.TestCase):
       with patch.object(parked_probe, "RESULT_DIR", root), patch.object(parked_probe, "STATUS_FILE", root / "status.json"), \
            patch.object(parked_probe, "LOG_FILE", root / "probe.log"), patch.object(parked_probe, "wait_for_pandad", return_value=False), \
            patch.object(parked_probe.time, "sleep"), patch.object(parked_probe, "run_command", side_effect=run):
-        self.assertEqual(parked_probe.run_worker(), 0)
+        self.assertEqual(parked_probe.run_worker(), 3)
 
       status = json.loads((root / "status.json").read_text())
       self.assertFalse(status["probe_started"])
@@ -72,12 +78,49 @@ class TestParkedProbe(unittest.TestCase):
            patch.object(parked_probe, "probe_report_path", return_value=root / "missing.json"), \
            patch.object(parked_probe, "wait_for_pandad", return_value=True), \
            patch.object(parked_probe.time, "sleep"), patch.object(parked_probe, "run_command", side_effect=run):
-        self.assertEqual(parked_probe.run_worker(), 0)
+        self.assertEqual(parked_probe.run_worker(), 3)
 
       status = json.loads((root / "status.json").read_text())
       self.assertEqual(status["probe_returncode"], 124)
       self.assertIn("restoration is unverified", status["error"])
       self.assertTrue(status["comma_restarted"])
+
+  def test_characterization_report_is_queued_and_partial_result_preserved(self):
+    with TemporaryDirectory() as directory:
+      root = Path(directory)
+      report_path = root / 'spool/k7-security-probe-test.json'
+      calls = []
+
+      def run(command, **_kwargs):
+        calls.append(command)
+        if 'runuser' in command:
+          report_path.parent.mkdir()
+          report_path.write_text(json.dumps({'restore_status': 'not_needed', 'final_config_verified': True,
+                                            'dtc_changed': None, 'status': 'collected_with_errors'}))
+          return SimpleNamespace(returncode=2)
+        return SimpleNamespace(returncode=0)
+
+      with patch.object(parked_probe, 'RESULT_DIR', root), patch.object(parked_probe, 'STATUS_FILE', root / 'status.json'), \
+           patch.object(parked_probe, 'LOG_FILE', root / 'probe.log'), patch.object(parked_probe, 'probe_report_path', return_value=report_path), \
+           patch.object(parked_probe, 'wait_for_pandad', return_value=True), patch.object(parked_probe.time, 'sleep'), \
+           patch.object(parked_probe, 'run_command', side_effect=run):
+        self.assertEqual(parked_probe.run_worker(characterize=True), 2)
+      status = json.loads((root / 'status.json').read_text())
+      self.assertEqual(status['mode'], 'characterize')
+      self.assertEqual(status['report_status'], 'collected_with_errors')
+      self.assertIn('--k7-characterize', calls[1])
+      self.assertTrue(status['comma_restarted'])
+
+  def test_missing_report_is_not_success_even_if_comma_restarts(self):
+    with TemporaryDirectory() as directory:
+      root = Path(directory)
+      with patch.object(parked_probe, 'RESULT_DIR', root), patch.object(parked_probe, 'STATUS_FILE', root / 'status.json'), \
+           patch.object(parked_probe, 'LOG_FILE', root / 'probe.log'), \
+           patch.object(parked_probe, 'probe_report_path', return_value=root / 'missing.json'), \
+           patch.object(parked_probe, 'wait_for_pandad', return_value=True), patch.object(parked_probe.time, 'sleep'), \
+           patch.object(parked_probe, 'run_command', return_value=SimpleNamespace(returncode=0)):
+        self.assertEqual(parked_probe.run_worker(characterize=True), 3)
+      self.assertIn('report missing', json.loads((root / 'status.json').read_text())['error'])
 
 
 if __name__ == "__main__":
