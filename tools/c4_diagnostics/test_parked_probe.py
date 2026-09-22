@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from tools.c4_diagnostics import parked_probe
+from tools.c4_diagnostics.auto_upload import pending_captures
 
 
 class TestParkedProbe(unittest.TestCase):
@@ -45,6 +46,11 @@ class TestParkedProbe(unittest.TestCase):
       self.assertEqual(calls[-1], ["systemctl", "is-active", "--quiet", "comma"])
       self.assertIn("--k7-security-probe", calls[1])
       self.assertNotIn("--k7-experimental", calls[1])
+      queued = pending_captures(report_path.parent, {"uploaded": {}})
+      self.assertEqual(len(queued), 2)
+      uploaded_status = json.loads(next(path for path in queued if path != report_path).read_text())
+      self.assertEqual(uploaded_status["worker_status"], status)
+      self.assertIn('RESULT', uploaded_status['log_tail'])
 
   def test_pandad_still_running_skips_probe_but_restarts_comma(self):
     with TemporaryDirectory() as directory:
@@ -84,6 +90,9 @@ class TestParkedProbe(unittest.TestCase):
       self.assertEqual(status["probe_returncode"], 124)
       self.assertIn("restoration is unverified", status["error"])
       self.assertTrue(status["comma_restarted"])
+      queued = pending_captures(root, {"uploaded": {}})
+      self.assertEqual(len(queued), 1)
+      self.assertEqual(json.loads(queued[0].read_text())["worker_status"], status)
 
   def test_characterization_report_is_queued_and_partial_result_preserved(self):
     with TemporaryDirectory() as directory:

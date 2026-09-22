@@ -17,6 +17,7 @@ PROBE = ROOT / "openpilot/selfdrive/debug/car/hyundai_enable_radar_points.py"
 RESULT_DIR = Path("/data/c4-diagnostics")
 STATUS_FILE = RESULT_DIR / "k7-parked-probe-status.json"
 LOG_FILE = RESULT_DIR / "k7-parked-probe.log"
+MAX_UPLOADED_LOG_BYTES = 32 * 1024
 
 
 def run_command(command, **kwargs):
@@ -113,6 +114,14 @@ def run_worker(characterize=False):
       status["finished_at"] = time.time()
       STATUS_FILE.write_text(json.dumps(status, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
       log.write(f"\nRESULT {json.dumps(status, ensure_ascii=False)}\n")
+  spool = Path(status["report_path"]).parent if status["report_path"] else RESULT_DIR / "spool"
+  spool.mkdir(parents=True, exist_ok=True)
+  upload_path = spool / f"k7-security-probe-status-{uuid.uuid4()}.json"
+  log_tail = LOG_FILE.read_bytes()[-MAX_UPLOADED_LOG_BYTES:].decode("utf-8", errors="replace")
+  upload_path.write_text(json.dumps({"schema": "c4-k7-parked-probe-status-v1", "created_at": time.time(),
+                                     "worker_status": status, "log_tail": log_tail}, ensure_ascii=False) + "\n",
+                         encoding="utf-8")
+  os.chmod(upload_path, 0o644)
   if not status["comma_restarted"] or status["error"] or not status["final_config_verified"]:
     return 3
   expected_restore = "not_needed" if characterize else "confirmed"
