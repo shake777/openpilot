@@ -12,6 +12,48 @@ from tools.c4_diagnostics.auto_upload import pending_captures
 
 
 class TestParkedProbe(unittest.TestCase):
+  def test_summary_preserves_values_rejections_and_missing_extended_read(self):
+    report = {'reads': {'did_0140': {'status': 'ok', 'raw_hex': '0102'},
+                        'extended_did_0140': {'status': 'ok', 'raw_hex': '0102'},
+                        'did_0145': {'status': 'error', 'nrc': '0x31'}},
+              'errors': [{'nrc': '0x31', 'stage': 'did_0145'}] * 21}
+    summary = parked_probe.summarize_report(report)
+    self.assertEqual(summary['error_counts'], {'0x31': 21})
+    self.assertEqual(summary['did_values']['0x0140']['default']['raw_hex'], '0102')
+    self.assertEqual(summary['did_values']['0x0145']['default']['nrc'], '0x31')
+    self.assertEqual(summary['did_values']['0x0145']['extended'], {})
+
+  def test_saved_summary_is_uploaded_without_running_vehicle_commands(self):
+    with TemporaryDirectory() as directory:
+      root = Path(directory)
+      report = root / 'report.json'
+      report.write_text(json.dumps({'reads': {'did_0142': {'status': 'ok', 'raw_hex': '0002000000'}}}))
+      status_path = root / 'status.json'
+      original = json.dumps({'report_path': str(report), 'restore_status': 'unconfirmed',
+                             'final_config_verified': False, 'report_status': 'restore_unverified'})
+      status_path.write_text(original)
+      with patch.object(parked_probe, 'STATUS_FILE', status_path), \
+           patch.object(parked_probe, 'probe_report_path', return_value=root / 'spool/unused.json'), \
+           patch.object(parked_probe, 'run_command') as run:
+        self.assertEqual(parked_probe.summarize_last(), 0)
+        run.assert_not_called()
+      queued = pending_captures(root / 'spool', {'uploaded': {}})
+      self.assertEqual(len(queued), 1)
+      status = json.loads(queued[0].read_text())['worker_status']
+      self.assertEqual(status['restore_status'], 'unconfirmed')
+      self.assertFalse(status['final_config_verified'])
+      self.assertEqual(status['summary']['did_values']['0x0142']['default']['raw_hex'], '0002000000')
+      self.assertEqual(status_path.read_text(), original)
+
+  def test_missing_saved_report_does_not_queue_success(self):
+    with TemporaryDirectory() as directory:
+      root = Path(directory)
+      status = root / 'status.json'
+      status.write_text('{}')
+      with patch.object(parked_probe, 'STATUS_FILE', status), patch.object(parked_probe, 'probe_report_path') as path:
+        self.assertEqual(parked_probe.summarize_last(), 2)
+        path.assert_not_called()
+
   def test_recovery_launch_skips_text_prompt_and_refuses_unverified_vehicle(self):
     with patch.object(parked_probe, 'PROBE', Path(__file__)), patch.object(Path, 'exists', return_value=True), \
          patch.object(parked_probe, 'vehicle_ready_for_probe', return_value=False), \

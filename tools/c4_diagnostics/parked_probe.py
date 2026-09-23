@@ -2,6 +2,7 @@
 """Run the existing parked K7 probe outside the comma service cgroup."""
 
 import argparse
+from collections import Counter
 import json
 import os
 from pathlib import Path
@@ -140,6 +141,52 @@ def probe_command(report_path, characterize=False, compare_sessions=False):
   return command
 
 
+def summarize_report(report):
+  reads = report.get("reads", {})
+  did_values = {}
+  for name, entry in reads.items():
+    if not name.startswith("did_"):
+      continue
+    extended = reads.get(f"extended_{name}", {})
+    did_values[f"0x{name[4:]}"] = {
+      "default": {key: entry[key] for key in ("status", "raw_hex", "nrc", "timeout") if key in entry},
+      "extended": {key: extended[key] for key in ("status", "raw_hex", "nrc", "timeout") if key in extended},
+    }
+  return {"error_counts": dict(Counter(error.get("nrc", error.get("error_type", "unknown"))
+                                       for error in report.get("errors", []))),
+          "error_stages": [error.get("stage", "unknown") for error in report.get("errors", [])],
+          "did_values": did_values}
+
+
+def summarize_last():
+  # Only read saved evidence; this command never starts services or contacts the ECU.
+  try:
+    status = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+    if not status.get("report_path"):
+      print("No saved diagnostic report; previous attempt may have been blocked")
+      return 2
+    report = json.loads(Path(status["report_path"]).read_text(encoding="utf-8"))
+    status["summary"] = summarize_report(report)
+    spool = probe_report_path().parent
+    spool.mkdir(parents=True, exist_ok=True)
+    path = spool / f"k7-security-probe-status-{uuid.uuid4()}.json"
+    path.write_text(json.dumps({"schema": "c4-k7-parked-probe-status-v1", "created_at": time.time(),
+                                "worker_status": status, "log_tail": "Summary from saved report; no new ECU requests."}) + "\n",
+                    encoding="utf-8")
+    os.chmod(path, 0o644)
+    print(f"Saved result status: {status.get('report_status', 'unknown')}")
+    print(f"Error counts: {status['summary']['error_counts']}")
+    for did, values in status["summary"]["did_values"].items():
+      if any(value.get("status") == "ok" for value in values.values()):
+        print(f"{did}: default={values['default'].get('raw_hex', 'unavailable')} "
+              f"extended={values['extended'].get('raw_hex', 'unavailable')}")
+    print(f"Summary queued for automatic upload: {path}")
+    return 0
+  except (OSError, ValueError) as error:
+    print(f"Could not summarize saved report: {error}")
+    return 2
+
+
 def run_worker(characterize=False, verify_parked=False, compare_sessions=False):
   RESULT_DIR.mkdir(parents=True, exist_ok=True)
   status = {"started_at": time.time(), "probe_started": False, "probe_returncode": None,
@@ -178,6 +225,7 @@ def run_worker(characterize=False, verify_parked=False, compare_sessions=False):
         status["dtc_changed"] = report.get("dtc_changed")
         status["session_comparison"] = report.get("session_comparison")
         status["comparison_complete"] = report.get("comparison_complete")
+        status["summary"] = summarize_report(report)
       else:
         status["error"] = status["error"] or "probe report missing; diagnostic result is unverified"
     except (OSError, ValueError, RuntimeError) as error:
@@ -215,7 +263,12 @@ def main():
   parser.add_argument('--compare-sessions', action='store_true', help='with --characterize, compare default and extended-session reads')
   parser.add_argument('--from-recovery', action='store_true', help=argparse.SUPPRESS)
   parser.add_argument('--verify-parked', action='store_true', help=argparse.SUPPRESS)
+  parser.add_argument('--summarize-last', action='store_true', help='summarize and queue the saved report without contacting the ECU')
   args = parser.parse_args()
+  if args.summarize_last:
+    if any((args.worker, args.characterize, args.compare_sessions, args.from_recovery, args.verify_parked)):
+      parser.error('--summarize-last must be used alone')
+    return summarize_last()
   if args.compare_sessions and not args.characterize:
     parser.error('--compare-sessions requires --characterize')
   if args.worker:
