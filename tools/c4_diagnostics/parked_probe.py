@@ -152,10 +152,19 @@ def summarize_report(report):
       "default": {key: entry[key] for key in ("status", "raw_hex", "nrc", "timeout") if key in entry},
       "extended": {key: extended[key] for key in ("status", "raw_hex", "nrc", "timeout") if key in extended},
     }
+  configs = [report.get(key) for key in ("default_config_hex", "extended_config_hex",
+                                         "post_config_hex", "post_restore_config_hex")]
+  security = ({key: report[key] for key in ("status", "seed_length", "session_confirmation_source",
+                                               "session_keepalive_confirmed", "key_sent", "write_performed") if key in report}
+              if "security_level" in report else {})
+  if security:
+    security["f186_unsupported"] = any(error.get("stage") == "session_read" and error.get("nrc") == "0x31"
+                                         for error in report.get("errors", []))
+    security["configuration_unchanged_verified"] = (len(set(configs)) == 1 if all(configs) and report.get("final_config_verified") else None)
   return {"error_counts": dict(Counter(error.get("nrc", error.get("error_type", "unknown"))
                                        for error in report.get("errors", []))),
           "error_stages": [error.get("stage", "unknown") for error in report.get("errors", [])],
-          "did_values": did_values}
+          "did_values": did_values, "security": security}
 
 
 def summarize_last(spool_dir=None):

@@ -46,6 +46,26 @@ class TestParkedProbe(unittest.TestCase):
     self.assertEqual(summary['did_values']['0x0140']['default']['raw_hex'], '0102')
     self.assertEqual(summary['did_values']['0x0145']['default']['nrc'], '0x31')
     self.assertEqual(summary['did_values']['0x0145']['extended'], {})
+    self.assertEqual(summary['security'], {})
+
+  def test_summary_distinguishes_unsupported_f186_from_accepted_seed(self):
+    report = {'status': 'seed_accepted', 'security_level': '0x01', 'seed_hex': 'c17c', 'seed_length': 2,
+              'session_confirmation_source': 'extended_response_and_0142',
+              'session_keepalive_confirmed': True, 'key_sent': False, 'write_performed': False,
+              'default_config_hex': '0002000000', 'extended_config_hex': '0002000000',
+              'post_config_hex': '0002000000', 'post_restore_config_hex': '0002000000',
+              'final_config_verified': True,
+              'errors': [{'stage': 'session_read', 'nrc': '0x31'}]}
+    summary = parked_probe.summarize_report(report)
+    self.assertEqual(summary['error_counts'], {'0x31': 1})
+    self.assertEqual(summary['security'], {
+      'status': 'seed_accepted', 'seed_length': 2,
+      'session_confirmation_source': 'extended_response_and_0142',
+      'session_keepalive_confirmed': True, 'key_sent': False, 'write_performed': False,
+      'f186_unsupported': True, 'configuration_unchanged_verified': True})
+    self.assertNotIn('c17c', json.dumps(summary))
+    report['post_restore_config_hex'] = None
+    self.assertIsNone(parked_probe.summarize_report(report)['security']['configuration_unchanged_verified'])
 
   def test_saved_summary_is_uploaded_without_running_vehicle_commands(self):
     with TemporaryDirectory() as directory:
