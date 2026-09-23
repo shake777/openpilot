@@ -24,17 +24,55 @@ def run_command(command, **kwargs):
   return subprocess.run(command, check=False, text=True, **kwargs)
 
 
-def vehicle_ready_for_probe():
+def vehicle_ready_for_probe(evidence=None):
   from openpilot.cereal import messaging
 
-  sm = messaging.SubMaster(["carState", "deviceState"])
-  for _ in range(3):
+  sm = messaging.SubMaster(["carState", "deviceState"], poll="deviceState")
+  evidence = evidence if evidence is not None else {}
+  for attempt in range(10):
     sm.update(1000)
-    if all(sm.alive[name] and sm.valid[name] for name in ("carState", "deviceState")):
+    reasons = []
+    evidence.clear()
+    evidence.update(attempt=attempt + 1, services={
+      name: {"alive": bool(sm.alive[name]), "valid": bool(sm.valid[name])}
+      for name in ("carState", "deviceState")})
+    for name, state in evidence["services"].items():
+      if not state["alive"] or not state["valid"]:
+        reasons.append(f"{name} unavailable or invalid")
+    if not reasons:
       car = sm["carState"]
       gear = str(car.gearShifter).lower().split(".")[-1]
-      return gear == "park" and abs(car.vEgo) < 0.1 and car.engineRpm < 1 and bool(sm["deviceState"].started)
+      evidence.update(gear=gear, v_ego=float(car.vEgo), engine_rpm=float(car.engineRpm),
+                      started=bool(sm["deviceState"].started))
+      if gear != "park":
+        reasons.append("gear is not P")
+      if not abs(car.vEgo) < 0.1:
+        reasons.append("vehicle is not stationary")
+      if not car.engineRpm < 1:
+        reasons.append("engine RPM is not zero")
+      if not evidence["started"]:
+        reasons.append("ignition/onroad state is not ready")
+    evidence["reasons"] = reasons
+    if not reasons:
+      return True
   return False
+
+
+def record_preflight_block(evidence, characterize, compare_sessions):
+  status = {"started_at": time.time(), "finished_at": time.time(), "probe_started": False,
+            "comma_restarted": False, "restore_status": "not_needed", "final_config_verified": None,
+            "error": "parked_state_unverified", "preflight": evidence,
+            "mode": "characterize" if characterize else "security_probe", "compare_sessions": compare_sessions}
+  RESULT_DIR.mkdir(parents=True, exist_ok=True)
+  STATUS_FILE.write_text(json.dumps(status, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+  spool = probe_report_path().parent
+  spool.mkdir(parents=True, exist_ok=True)
+  path = spool / f"k7-security-probe-status-{uuid.uuid4()}.json"
+  path.write_text(json.dumps({"schema": "c4-k7-parked-probe-status-v1", "created_at": time.time(),
+                              "worker_status": status, "log_tail": "Preflight blocked; no diagnostic started."}) + "\n",
+                  encoding="utf-8")
+  os.chmod(path, 0o644)
+  print(f"Blocked result queued for automatic upload: {path}")
 
 
 def start_from_web(characterize=False, from_recovery=False, compare_sessions=False):
@@ -42,8 +80,15 @@ def start_from_web(characterize=False, from_recovery=False, compare_sessions=Fal
     print("C4 AGNOS or radar probe script not found; nothing was started")
     return 2
   if from_recovery:
-    if not vehicle_ready_for_probe():
+    evidence = {}
+    print("Checking live parked state (up to 10 samples)...", flush=True)
+    if not vehicle_ready_for_probe(evidence):
       print("Parked vehicle state could not be verified; nothing was started")
+      print(json.dumps(evidence, ensure_ascii=False))
+      try:
+        record_preflight_block(evidence, characterize, compare_sessions)
+      except OSError as error:
+        print(f"Could not save blocked result: {error}")
       return 2
   elif input("Parked, parking brake set, engine OFF and ignition ON? Type PARKED to start: ").strip() != "PARKED":
     print("Cancelled; nothing was started")
@@ -100,10 +145,15 @@ def run_worker(characterize=False, verify_parked=False, compare_sessions=False):
   status = {"started_at": time.time(), "probe_started": False, "probe_returncode": None,
             "report_path": None, "restore_status": None, "final_config_verified": None,
             "comma_restarted": False, "error": None, "mode": "characterize" if characterize else "security_probe"}
+  stop_attempted = False
   with LOG_FILE.open("w", encoding="utf-8") as log:
     try:
-      if verify_parked and not vehicle_ready_for_probe():
-        raise RuntimeError("parked vehicle state changed; radar probe was not run")
+      if verify_parked:
+        status["preflight"] = {}
+        if not vehicle_ready_for_probe(status["preflight"]):
+          status["restore_status"] = "not_needed"
+          raise RuntimeError("parked vehicle state changed; radar probe was not run")
+      stop_attempted = True
       stop = run_command(["systemctl", "stop", "comma"], stdout=log, stderr=subprocess.STDOUT)
       if stop.returncode:
         raise RuntimeError(f"systemctl stop comma failed: {stop.returncode}")
@@ -133,11 +183,12 @@ def run_worker(characterize=False, verify_parked=False, compare_sessions=False):
     except (OSError, ValueError, RuntimeError) as error:
       status["error"] = str(error)
     finally:
-      restart = run_command(["systemctl", "start", "comma"], stdout=log, stderr=subprocess.STDOUT)
-      if restart.returncode == 0:
-        time.sleep(3)
-        status["comma_restarted"] = run_command(["systemctl", "is-active", "--quiet", "comma"],
-                                                stdout=log, stderr=subprocess.STDOUT).returncode == 0
+      if stop_attempted:
+        restart = run_command(["systemctl", "start", "comma"], stdout=log, stderr=subprocess.STDOUT)
+        if restart.returncode == 0:
+          time.sleep(3)
+          status["comma_restarted"] = run_command(["systemctl", "is-active", "--quiet", "comma"],
+                                                  stdout=log, stderr=subprocess.STDOUT).returncode == 0
       status["finished_at"] = time.time()
       STATUS_FILE.write_text(json.dumps(status, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
       log.write(f"\nRESULT {json.dumps(status, ensure_ascii=False)}\n")

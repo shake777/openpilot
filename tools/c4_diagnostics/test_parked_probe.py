@@ -15,10 +15,12 @@ class TestParkedProbe(unittest.TestCase):
   def test_recovery_launch_skips_text_prompt_and_refuses_unverified_vehicle(self):
     with patch.object(parked_probe, 'PROBE', Path(__file__)), patch.object(Path, 'exists', return_value=True), \
          patch.object(parked_probe, 'vehicle_ready_for_probe', return_value=False), \
+         patch.object(parked_probe, 'record_preflight_block') as record, \
          patch('builtins.input', side_effect=AssertionError('text prompt')), \
          patch.object(parked_probe, 'run_command') as run:
       self.assertEqual(parked_probe.start_from_web(from_recovery=True), 2)
       run.assert_not_called()
+      record.assert_called_once()
 
   def test_worker_rechecks_parked_state_before_stopping_comma(self):
     with TemporaryDirectory() as directory:
@@ -34,7 +36,7 @@ class TestParkedProbe(unittest.TestCase):
            patch.object(parked_probe, 'vehicle_ready_for_probe', return_value=False), \
            patch.object(parked_probe, 'run_command', side_effect=run), patch.object(parked_probe.time, 'sleep'):
         self.assertEqual(parked_probe.run_worker(verify_parked=True), 3)
-      self.assertNotIn(['systemctl', 'stop', 'comma'], calls)
+      self.assertEqual(calls, [])
       self.assertIn('state changed', json.loads((root / 'status.json').read_text())['error'])
 
   def test_recovery_launch_checks_live_vehicle_state(self):
@@ -57,9 +59,51 @@ class TestParkedProbe(unittest.TestCase):
             return messages[key]
 
         sm = FakeSubMaster()
-        cereal = SimpleNamespace(messaging=SimpleNamespace(SubMaster=lambda _: sm))
+        cereal = SimpleNamespace(messaging=SimpleNamespace(SubMaster=lambda _, **kwargs: sm))
         with patch.dict(sys.modules, {'openpilot.cereal': cereal}):
           self.assertEqual(parked_probe.vehicle_ready_for_probe(), expected)
+
+  def test_preflight_waits_for_delayed_state_and_reports_invalid_stream(self):
+    for ready_after in (5, 100):
+      with self.subTest(ready_after=ready_after):
+        class FakeSubMaster:
+          alive = {'carState': False, 'deviceState': True}
+          valid = {'carState': False, 'deviceState': True}
+          updates = 0
+
+          def update(self, _timeout):
+            self.updates += 1
+            self.alive['carState'] = self.valid['carState'] = self.updates >= ready_after
+
+          def __getitem__(self, key):
+            return SimpleNamespace(gearShifter='park', vEgo=0, engineRpm=0, started=True)
+
+        sm = FakeSubMaster()
+        def submaster(services, **kwargs):
+          self.assertEqual(kwargs['poll'], 'deviceState')
+          return sm
+        cereal = SimpleNamespace(messaging=SimpleNamespace(SubMaster=submaster))
+        evidence = {}
+        with patch.dict(sys.modules, {'openpilot.cereal': cereal}):
+          self.assertEqual(parked_probe.vehicle_ready_for_probe(evidence), ready_after == 5)
+        self.assertEqual(sm.updates, min(ready_after, 10))
+        self.assertEqual(evidence['reasons'], [] if ready_after == 5 else ['carState unavailable or invalid'])
+
+  def test_preflight_block_is_discovered_by_uploader(self):
+    with TemporaryDirectory() as directory:
+      root = Path(directory)
+      evidence = {'reasons': ['gear is not P'], 'gear': 'drive'}
+      with patch.object(parked_probe, 'RESULT_DIR', root), patch.object(parked_probe, 'STATUS_FILE', root / 'status.json'), \
+           patch.object(parked_probe, 'probe_report_path', return_value=root / 'spool/unused.json'):
+        parked_probe.record_preflight_block(evidence, True, True)
+      queued = pending_captures(root / 'spool', {'uploaded': {}})
+      self.assertEqual(len(queued), 1)
+      status = json.loads(queued[0].read_text())['worker_status']
+      self.assertEqual(status['preflight'], evidence)
+      self.assertFalse(status['probe_started'])
+      self.assertFalse(status['comma_restarted'])
+      self.assertTrue(status['compare_sessions'])
+      self.assertEqual(status, json.loads((root / 'status.json').read_text()))
 
   def test_characterize_command_cannot_select_security_or_write_mode(self):
     command = parked_probe.probe_command(Path('/tmp/report.json'), characterize=True)
