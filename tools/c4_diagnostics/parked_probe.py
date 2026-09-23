@@ -15,6 +15,7 @@ import uuid
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 PROBE = ROOT / "openpilot/selfdrive/debug/car/hyundai_enable_radar_points.py"
+CANDIDATE_TRIAL = ROOT / "tools/c4_diagnostics/k7_candidate_trial.py"
 RESULT_DIR = Path("/data/c4-diagnostics")
 STATUS_FILE = RESULT_DIR / "k7-parked-probe-status.json"
 LOG_FILE = RESULT_DIR / "k7-parked-probe.log"
@@ -59,11 +60,12 @@ def vehicle_ready_for_probe(evidence=None):
   return False
 
 
-def record_preflight_block(evidence, characterize, compare_sessions):
+def record_preflight_block(evidence, characterize, compare_sessions, candidate_trial=False):
   status = {"started_at": time.time(), "finished_at": time.time(), "probe_started": False,
             "comma_restarted": False, "restore_status": "not_needed", "final_config_verified": None,
             "error": "parked_state_unverified", "preflight": evidence,
-            "mode": "characterize" if characterize else "security_probe", "compare_sessions": compare_sessions}
+            "mode": "candidate_trial" if candidate_trial else "characterize" if characterize else "security_probe",
+            "compare_sessions": compare_sessions}
   RESULT_DIR.mkdir(parents=True, exist_ok=True)
   STATUS_FILE.write_text(json.dumps(status, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
   spool = probe_report_path().parent
@@ -76,18 +78,18 @@ def record_preflight_block(evidence, characterize, compare_sessions):
   print(f"Blocked result queued for automatic upload: {path}")
 
 
-def start_from_web(characterize=False, from_recovery=False, compare_sessions=False):
-  if not Path("/AGNOS").exists() or not PROBE.is_file():
+def start_from_web(characterize=False, from_recovery=False, compare_sessions=False, candidate_trial=False):
+  if not Path("/AGNOS").exists() or not PROBE.is_file() or (candidate_trial and not CANDIDATE_TRIAL.is_file()):
     print("C4 AGNOS or radar probe script not found; nothing was started")
     return 2
-  if from_recovery:
+  if from_recovery or candidate_trial:
     evidence = {}
     print("Checking live parked state (up to 10 samples)...", flush=True)
     if not vehicle_ready_for_probe(evidence):
       print("Parked vehicle state could not be verified; nothing was started")
       print(json.dumps(evidence, ensure_ascii=False))
       try:
-        record_preflight_block(evidence, characterize, compare_sessions)
+        record_preflight_block(evidence, characterize, compare_sessions, candidate_trial)
       except OSError as error:
         print(f"Could not save blocked result: {error}")
       return 2
@@ -98,12 +100,14 @@ def start_from_web(characterize=False, from_recovery=False, compare_sessions=Fal
   unit = "c4-k7-parked-probe"
   command = ["sudo", "-n", "systemd-run", "--collect", f"--unit={unit}",
              f"--working-directory={ROOT}", "--", sys.executable, str(Path(__file__).resolve()), "--worker"]
-  if from_recovery:
+  if from_recovery or candidate_trial:
     command.append('--verify-parked')
   if characterize:
     command.append('--characterize')
   if compare_sessions:
     command.append('--compare-sessions')
+  if candidate_trial:
+    command.append('--candidate-trial')
   result = run_command(command)
   if result.returncode:
     print("Could not start isolated probe unit; comma service was not stopped")
@@ -132,7 +136,14 @@ def probe_report_path():
   return spool / f"k7-security-probe-{uuid.uuid4()}.json"
 
 
-def probe_command(report_path, characterize=False, compare_sessions=False):
+def probe_command(report_path, characterize=False, compare_sessions=False, candidate_trial=False, restore_only=False):
+  if candidate_trial:
+    command = ["runuser", "-u", "comma", "--", "/usr/bin/env",
+               f"PYTHONPATH={ROOT}:/data/pythonpath", sys.executable, str(CANDIDATE_TRIAL),
+               "--output", str(report_path)]
+    if restore_only:
+      command.append('--restore-only')
+    return command
   command = ["runuser", "-u", "comma", "--", "/usr/bin/env",
           f"PYTHONPATH={ROOT}:/data/pythonpath", sys.executable, str(PROBE),
           "--k7-characterize" if characterize else "--k7-security-probe", "--probe-output", str(report_path)]
@@ -208,11 +219,12 @@ def summarize_last_once(spool_dir):
   return result
 
 
-def run_worker(characterize=False, verify_parked=False, compare_sessions=False):
+def run_worker(characterize=False, verify_parked=False, compare_sessions=False, candidate_trial=False):
   RESULT_DIR.mkdir(parents=True, exist_ok=True)
   status = {"started_at": time.time(), "probe_started": False, "probe_returncode": None,
             "report_path": None, "restore_status": None, "final_config_verified": None,
-            "comma_restarted": False, "error": None, "mode": "characterize" if characterize else "security_probe"}
+            "comma_restarted": False, "error": None,
+            "mode": "candidate_trial" if candidate_trial else "characterize" if characterize else "security_probe"}
   stop_attempted = False
   with LOG_FILE.open("w", encoding="utf-8") as log:
     try:
@@ -231,23 +243,42 @@ def run_worker(characterize=False, verify_parked=False, compare_sessions=False):
       report_path = probe_report_path()
       status["report_path"] = str(report_path)
       status["probe_started"] = True
-      probe = run_command(["timeout", "--kill-after=5s", "120s", *probe_command(report_path, characterize, compare_sessions)],
+      probe = run_command(["timeout", "--kill-after=5s", "120s",
+                           *probe_command(report_path, characterize, compare_sessions, candidate_trial)],
                           input="OK\n", stdout=log, stderr=subprocess.STDOUT, cwd=ROOT)
       status["probe_returncode"] = probe.returncode
       if probe.returncode == 124:
         status["error"] = ("radar characterization timed out; final configuration is unverified" if characterize else
                            "radar probe timed out; session restoration is unverified")
 
+      if candidate_trial:
+        recovery_path = probe_report_path()
+        status['recovery_report_path'] = str(recovery_path)
+        recovery = run_command(["timeout", "--kill-after=5s", "60s",
+                                *probe_command(recovery_path, candidate_trial=True, restore_only=True)],
+                               stdout=log, stderr=subprocess.STDOUT, cwd=ROOT)
+        status['recovery_returncode'] = recovery.returncode
+        if recovery_path.is_file():
+          restored = json.loads(recovery_path.read_text(encoding='utf-8'))
+          status['restore_status'] = restored.get('restore_status')
+          status['final_config_verified'] = restored.get('final_config_verified')
+          status['default_session_restored'] = restored.get('default_session_restored')
+        if recovery.returncode or status['restore_status'] != 'confirmed':
+          status['error'] = 'independent original-configuration verification failed; do not drive until reviewed'
+
       if report_path.is_file():
         report = json.loads(report_path.read_text(encoding="utf-8"))
-        status["restore_status"] = report.get("restore_status")
-        status["final_config_verified"] = report.get("final_config_verified")
+        if not candidate_trial:
+          status["restore_status"] = report.get("restore_status")
+          status["final_config_verified"] = report.get("final_config_verified")
         status["report_status"] = report.get("status")
         status["dtc_changed"] = report.get("dtc_changed")
         status["session_comparison"] = report.get("session_comparison")
         status["comparison_complete"] = report.get("comparison_complete")
         status["summary"] = summarize_report(report)
       else:
+        if candidate_trial:
+          status['trial_report_missing'] = True
         status["error"] = status["error"] or "probe report missing; diagnostic result is unverified"
     except (OSError, ValueError, RuntimeError) as error:
       status["error"] = str(error)
@@ -282,21 +313,24 @@ def main():
   parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
   parser.add_argument('--characterize', action='store_true', help='collect bounded identity/configuration/DTC reads without session or security requests')
   parser.add_argument('--compare-sessions', action='store_true', help='with --characterize, compare default and extended-session reads')
+  parser.add_argument('--candidate-trial', action='store_true', help='stationary K7 single-candidate trial with independent restore verification')
   parser.add_argument('--from-recovery', action='store_true', help=argparse.SUPPRESS)
   parser.add_argument('--verify-parked', action='store_true', help=argparse.SUPPRESS)
   parser.add_argument('--summarize-last', action='store_true', help='summarize and queue the saved report without contacting the ECU')
   args = parser.parse_args()
   if args.summarize_last:
-    if any((args.worker, args.characterize, args.compare_sessions, args.from_recovery, args.verify_parked)):
+    if any((args.worker, args.characterize, args.compare_sessions, args.from_recovery, args.verify_parked, args.candidate_trial)):
       parser.error('--summarize-last must be used alone')
     return summarize_last()
   if args.compare_sessions and not args.characterize:
     parser.error('--compare-sessions requires --characterize')
+  if args.candidate_trial and (args.characterize or args.compare_sessions):
+    parser.error('--candidate-trial cannot be combined with characterization')
   if args.worker:
     if os.geteuid() != 0:
       parser.error("worker must run as root in its own systemd unit")
-    return run_worker(args.characterize, args.verify_parked, args.compare_sessions)
-  return start_from_web(args.characterize, args.from_recovery, args.compare_sessions)
+    return run_worker(args.characterize, args.verify_parked, args.compare_sessions, args.candidate_trial)
+  return start_from_web(args.characterize, args.from_recovery, args.compare_sessions, args.candidate_trial)
 
 
 if __name__ == "__main__":

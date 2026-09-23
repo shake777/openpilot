@@ -149,6 +149,76 @@ class TestParkedProbe(unittest.TestCase):
         with patch.dict(sys.modules, {'openpilot.cereal': cereal}):
           self.assertEqual(parked_probe.vehicle_ready_for_probe(), expected)
 
+  def test_candidate_launch_requires_live_parked_state(self):
+    with patch.object(Path, 'exists', return_value=True), \
+         patch.object(parked_probe, 'vehicle_ready_for_probe', return_value=False), \
+         patch.object(parked_probe, 'record_preflight_block'), \
+         patch('builtins.input', side_effect=AssertionError('text prompt')), \
+         patch.object(parked_probe, 'run_command') as run:
+      self.assertEqual(parked_probe.start_from_web(candidate_trial=True), 2)
+      run.assert_not_called()
+
+  def test_candidate_worker_runs_independent_restore_and_queues_both_reports(self):
+    with TemporaryDirectory() as directory:
+      root = Path(directory)
+      primary = root / 'spool/k7-security-probe-trial.json'
+      recovery = root / 'spool/k7-security-probe-recovery.json'
+      calls = []
+
+      def run(command, **_kwargs):
+        calls.append(command)
+        if '--restore-only' in command:
+          recovery.parent.mkdir(exist_ok=True)
+          recovery.write_text(json.dumps({'status': 'already_original', 'restore_status': 'confirmed',
+                                          'final_config_verified': True, 'default_session_restored': True}))
+        elif str(parked_probe.CANDIDATE_TRIAL) in command:
+          primary.parent.mkdir(exist_ok=True)
+          primary.write_text(json.dumps({'status': 'candidate_accepted', 'restore_status': 'confirmed',
+                                         'final_config_verified': True}))
+        return SimpleNamespace(returncode=0)
+
+      with patch.object(parked_probe, 'RESULT_DIR', root), patch.object(parked_probe, 'STATUS_FILE', root / 'status.json'), \
+           patch.object(parked_probe, 'LOG_FILE', root / 'probe.log'), \
+           patch.object(parked_probe, 'probe_report_path', side_effect=[primary, recovery]), \
+           patch.object(parked_probe, 'vehicle_ready_for_probe', return_value=True), \
+           patch.object(parked_probe, 'wait_for_pandad', return_value=True), patch.object(parked_probe.time, 'sleep'), \
+           patch.object(parked_probe, 'run_command', side_effect=run):
+        self.assertEqual(parked_probe.run_worker(candidate_trial=True, verify_parked=True), 0)
+      status = json.loads((root / 'status.json').read_text())
+      self.assertEqual(status['mode'], 'candidate_trial')
+      self.assertEqual(status['restore_status'], 'confirmed')
+      self.assertTrue(status['final_config_verified'])
+      self.assertTrue(status['comma_restarted'])
+      self.assertEqual(len(pending_captures(primary.parent, {'uploaded': {}})), 3)
+      self.assertIn('--restore-only', calls[2])
+
+  def test_candidate_worker_does_not_claim_success_when_trial_report_is_missing(self):
+    with TemporaryDirectory() as directory:
+      root = Path(directory)
+      primary = root / 'spool/k7-security-probe-trial.json'
+      recovery = root / 'spool/k7-security-probe-recovery.json'
+
+      def run(command, **_kwargs):
+        if '--restore-only' in command:
+          recovery.parent.mkdir(exist_ok=True)
+          recovery.write_text(json.dumps({'status': 'already_original', 'restore_status': 'confirmed',
+                                          'final_config_verified': True, 'default_session_restored': True}))
+          return SimpleNamespace(returncode=0)
+        return SimpleNamespace(returncode=124 if str(parked_probe.CANDIDATE_TRIAL) in command else 0)
+
+      with patch.object(parked_probe, 'RESULT_DIR', root), patch.object(parked_probe, 'STATUS_FILE', root / 'status.json'), \
+           patch.object(parked_probe, 'LOG_FILE', root / 'probe.log'), \
+           patch.object(parked_probe, 'probe_report_path', side_effect=[primary, recovery]), \
+           patch.object(parked_probe, 'wait_for_pandad', return_value=True), patch.object(parked_probe.time, 'sleep'), \
+           patch.object(parked_probe, 'run_command', side_effect=run):
+        self.assertEqual(parked_probe.run_worker(candidate_trial=True), 3)
+      status = json.loads((root / 'status.json').read_text())
+      self.assertTrue(status['final_config_verified'])
+      self.assertEqual(status['restore_status'], 'confirmed')
+      self.assertIn('timed out', status['error'])
+      self.assertTrue(status['trial_report_missing'])
+      self.assertFalse(primary.exists())
+
   def test_preflight_waits_for_delayed_state_and_reports_invalid_stream(self):
     for ready_after in (5, 100):
       with self.subTest(ready_after=ready_after):

@@ -81,3 +81,18 @@ retried on a later boot. The security result JSON includes NRC/timeout/blocked o
 configuration verification and seed length, without the seed bytes. The existing uploader
 sends it without a driving capture and retries network failures. No terminal command or
 service restart is required after updating and rebooting in P with radar tracks disabled.
+
+## K7 stationary candidate trial
+
+The separate command `python3 tools/c4_diagnostics/parked_probe.py --candidate-trial` is an explicit,
+one-candidate trial from the 6999 terminal. It is not run automatically at ignition or by the
+existing read-only Tools button. The launcher requires live P, zero speed, zero engine RPM and
+ignition-on state before starting a separate systemd unit. The unit stops comma, checks the exact
+K7 radar firmware and original DID `0142=0002000000`, attempts only `0002000001`, then restores
+the original configuration. A second independent process checks or restores the original before
+comma restarts. Both JSON reports and the status/log tail are queued for the existing uploader.
+Do not drive until `/data/c4-diagnostics/k7-parked-probe-status.json` shows `restore_status` as
+`confirmed`, `final_config_verified` as `true`, and `comma_restarted` as `true`. A successful write
+does not establish radar-track output; a security or condition rejection does not disprove the
+candidate value. The next candidate is not selected automatically.
+An NRC `0x31` on the write is ambiguous: it does not by itself prove that the candidate bits are wrong.
