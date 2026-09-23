@@ -82,6 +82,25 @@ K7_EXPERIMENTAL_CONFIG = ConfigValues(
 K7_BACKUP_PATH = Path("/data/k7-radar-0142-backup.json")
 
 
+def write_k7_candidate_and_restore(uds_client, data_id: int, candidate: bytes, original: bytes) -> bytes:
+  try:
+    uds_client.write_data_by_identifier(data_id, candidate)
+    observed = uds_client.read_data_by_identifier(data_id)
+    if observed != candidate:
+      raise ValueError(f"candidate readback mismatch: {observed.hex()}")
+    return observed
+  finally:
+    try:
+      current = uds_client.read_data_by_identifier(data_id)
+    except Exception:
+      current = None
+    if current != original:
+      uds_client.write_data_by_identifier(data_id, original)
+    restored = uds_client.read_data_by_identifier(data_id)
+    if restored != original:
+      raise ValueError(f"original configuration not restored: {restored.hex()}")
+
+
 def save_k7_security_probe_report(report: dict, output_path: Path | None = None) -> Path:
   from tools.c4_diagnostics.startup_inventory import save_report
   from tools.c4_diagnostics.upload import UploadError, load_config
@@ -174,6 +193,8 @@ if __name__ == "__main__":
                       help='read only F100 and 0142 in the default session; never change session or write')
   parser.add_argument('--k7-experimental', action="store_true", default=False,
                       help='explicitly test K7 99110-F6000 candidate; saves and verifies the original configuration')
+  parser.add_argument('--k7-test-write-restore', action='store_true',
+                      help='with --k7-experimental, test one candidate and restore the original in the same session')
   parser.add_argument('--k7-session-probe', action="store_true", default=False,
                       help='read-only probe of the standard extended diagnostic session on the exact K7 radar')
   parser.add_argument('--k7-security-probe', action="store_true", default=False,
@@ -203,6 +224,8 @@ if __name__ == "__main__":
     parser.error('--inventory-only cannot be combined with other diagnostic modes')
   if args.k7_experimental and (args.read_only or args.inventory_only or args.scan_config_dids or args.k7_session_probe or args.k7_security_probe):
     parser.error('--k7-experimental cannot be combined with read-only options')
+  if args.k7_test_write_restore and (not args.k7_experimental or args.default):
+    parser.error('--k7-test-write-restore requires --k7-experimental and cannot use --default')
   if args.k7_session_probe and (args.read_only or args.scan_config_dids or args.default or args.k7_security_probe):
     parser.error('--k7-session-probe is a standalone read-only mode')
   if args.k7_security_probe and (args.read_only or args.scan_config_dids or args.default):
@@ -501,8 +524,12 @@ if __name__ == "__main__":
     print(f"new config:     0x{new_config.hex()}")
     if k7_experimental:
       try:
-        uds_client.write_data_by_identifier(config_data_id, new_config)
-        verified_config = uds_client.read_data_by_identifier(config_data_id)
+        if args.k7_test_write_restore:
+          verified_config = write_k7_candidate_and_restore(uds_client, config_data_id, new_config, current_config)
+          print(f"K7 original configuration restored and verified: 0x{current_config.hex()}")
+        else:
+          uds_client.write_data_by_identifier(config_data_id, new_config)
+          verified_config = uds_client.read_data_by_identifier(config_data_id)
         if verified_config == new_config:
           print(f"K7 readback verified: 0x{verified_config.hex()}")
         else:
@@ -546,8 +573,11 @@ if __name__ == "__main__":
         sys.exit(3)
 
     print("[DONE]")
-    print("\nrestart your vehicle and ensure there are no faults")
-    if not args.default:
+    if args.k7_test_write_restore:
+      print("\nCandidate write was acknowledged and original configuration restored; radar tracks were not verified")
+    else:
+      print("\nrestart your vehicle and ensure there are no faults")
+    if not args.default and not args.k7_test_write_restore:
       print("you can run this script again with --default to go back to the original (factory) settings")
   else:
     print("[DONE]")
