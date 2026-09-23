@@ -12,6 +12,30 @@ from tools.c4_diagnostics.auto_upload import pending_captures
 
 
 class TestParkedProbe(unittest.TestCase):
+  def test_boot_summary_runs_once_after_success_and_retries_failure(self):
+    with TemporaryDirectory() as directory:
+      root = Path(directory)
+      status = root / 'status.json'
+      status.write_text('{}')
+      with patch.object(parked_probe, 'RESULT_DIR', root), patch.object(parked_probe, 'STATUS_FILE', status), \
+           patch.object(parked_probe, 'summarize_last', side_effect=[2, 0]) as summarize:
+        self.assertEqual(parked_probe.summarize_last_once(root / 'spool'), 2)
+        self.assertFalse((root / 'saved-summary-v1.done').exists())
+        self.assertEqual(parked_probe.summarize_last_once(root / 'spool'), 0)
+        self.assertTrue((root / 'saved-summary-v1.done').exists())
+        self.assertEqual(parked_probe.summarize_last_once(root / 'spool'), 0)
+        self.assertEqual(summarize.call_count, 2)
+        summarize.assert_called_with(root / 'spool')
+
+  def test_boot_without_saved_report_does_not_mark_completion(self):
+    with TemporaryDirectory() as directory:
+      root = Path(directory)
+      with patch.object(parked_probe, 'RESULT_DIR', root), patch.object(parked_probe, 'STATUS_FILE', root / 'missing.json'), \
+           patch.object(parked_probe, 'summarize_last') as summarize:
+        self.assertEqual(parked_probe.summarize_last_once(root / 'spool'), 2)
+        summarize.assert_not_called()
+        self.assertFalse((root / 'saved-summary-v1.done').exists())
+
   def test_summary_preserves_values_rejections_and_missing_extended_read(self):
     report = {'reads': {'did_0140': {'status': 'ok', 'raw_hex': '0102'},
                         'extended_did_0140': {'status': 'ok', 'raw_hex': '0102'},

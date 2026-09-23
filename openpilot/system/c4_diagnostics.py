@@ -11,6 +11,7 @@ import openpilot.cereal.messaging as messaging
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
 from tools.c4_diagnostics.auto_upload import load_or_start_state, pending_captures, upload_one
+from tools.c4_diagnostics.parked_probe import summarize_last_once
 from tools.c4_diagnostics.radar_capture import MAX_PENDING_DIAGNOSTICS, RadarCaptureWriter, capture_can_frame
 from tools.c4_diagnostics.scene_capture import SceneCaptureWriter, build_scene_frame
 from tools.c4_diagnostics.upload import UploadError, load_config
@@ -101,6 +102,11 @@ def main() -> None:
   spool_dir = Path(config.spool_dir)
   state_path = Path(config.state_path)
   state = load_or_start_state(state_path)
+
+  try:
+    summarize_last_once(spool_dir)
+  except (OSError, ValueError) as exc:
+    cloudlog.warning("C4 saved diagnostic summary failed: %s", exc)
 
   network_online = threading.Event()
   uploader = threading.Thread(

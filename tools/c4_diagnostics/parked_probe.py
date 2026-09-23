@@ -158,7 +158,7 @@ def summarize_report(report):
           "did_values": did_values}
 
 
-def summarize_last():
+def summarize_last(spool_dir=None):
   # Only read saved evidence; this command never starts services or contacts the ECU.
   try:
     status = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
@@ -167,7 +167,7 @@ def summarize_last():
       return 2
     report = json.loads(Path(status["report_path"]).read_text(encoding="utf-8"))
     status["summary"] = summarize_report(report)
-    spool = probe_report_path().parent
+    spool = Path(spool_dir) if spool_dir is not None else probe_report_path().parent
     spool.mkdir(parents=True, exist_ok=True)
     path = spool / f"k7-security-probe-status-{uuid.uuid4()}.json"
     path.write_text(json.dumps({"schema": "c4-k7-parked-probe-status-v1", "created_at": time.time(),
@@ -185,6 +185,18 @@ def summarize_last():
   except (OSError, ValueError) as error:
     print(f"Could not summarize saved report: {error}")
     return 2
+
+
+def summarize_last_once(spool_dir):
+  marker = RESULT_DIR / "saved-summary-v1.done"
+  if marker.exists():
+    return 0
+  if not STATUS_FILE.is_file():
+    return 2
+  result = summarize_last(spool_dir)
+  if result == 0:
+    marker.write_text("Saved report summary queued; server receipt is separate.\n", encoding="utf-8")
+  return result
 
 
 def run_worker(characterize=False, verify_parked=False, compare_sessions=False):
