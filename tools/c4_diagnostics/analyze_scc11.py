@@ -9,6 +9,7 @@ from tools.c4_diagnostics.radar_capture import iter_records
 
 
 SCC11_ADDR = 0x420
+SCC12_ADDR = 0x421
 SCC11_LEN = 8
 
 
@@ -17,10 +18,21 @@ def decode_scc11(data: bytes) -> dict:
     raise ValueError('SCC11 requires 8 data bytes')
   bits = int.from_bytes(data, 'little')
   return {
+    'obj_valid': bool((bits >> 16) & 1),
     'status': (bits >> 22) & 0x3,
     'distance_m': round(((bits >> 33) & 0x7ff) * 0.1, 1),
     'relative_speed_mps': round(((bits >> 44) & 0xfff) * 0.1 - 170, 1),
     'lateral_position_m': round(((bits >> 24) & 0x1ff) * 0.1 - 20, 1),
+  }
+
+
+def decode_scc12(data: bytes) -> dict:
+  if len(data) != SCC11_LEN:
+    raise ValueError('SCC12 requires 8 data bytes')
+  bits = int.from_bytes(data, 'little')
+  return {
+    'a_req_raw_mps2': round(((bits >> 24) & 0x7ff) * 0.01 - 10.23, 2),
+    'a_req_value_mps2': round(((bits >> 37) & 0x7ff) * 0.01 - 10.23, 2),
   }
 
 
@@ -32,7 +44,16 @@ def analyze(path: Path, bus: int = 0) -> dict:
   selected_times = []
   valid = []
   invalid_dlc = 0
+  obj_valid_frames = 0
+  scc12_values = []
+  scc12_invalid_dlc = 0
   for mono_time, address, source, data in iter_records(path):
+    if address == SCC12_ADDR and source == bus:
+      if len(data) == SCC11_LEN:
+        scc12_values.append(decode_scc12(data))
+      else:
+        scc12_invalid_dlc += 1
+      continue
     if address != SCC11_ADDR:
       continue
     source_counts[source] += 1
@@ -44,7 +65,8 @@ def analyze(path: Path, bus: int = 0) -> dict:
     selected_times.append(mono_time)
     decoded = decode_scc11(data)
     status_counts[decoded['status']] += 1
-    if decoded['status'] and 0 < decoded['distance_m'] < 150:
+    obj_valid_frames += decoded['obj_valid']
+    if decoded['obj_valid'] and decoded['status'] and 0 < decoded['distance_m'] < 150:
       valid.append(decoded)
 
   intervals_ms = [(later - earlier) / 1e6 for earlier, later in zip(selected_times, selected_times[1:])]
@@ -54,6 +76,11 @@ def analyze(path: Path, bus: int = 0) -> dict:
     'scc11_source_counts': {str(source): count for source, count in sorted(source_counts.items())},
     'received_frames': len(selected_times),
     'invalid_dlc': invalid_dlc,
+    'obj_valid_frames': obj_valid_frames,
+    'scc12_received_frames': len(scc12_values),
+    'scc12_invalid_dlc': scc12_invalid_dlc,
+    'scc12_a_req_raw_range_mps2': [min(v['a_req_raw_mps2'] for v in scc12_values), max(v['a_req_raw_mps2'] for v in scc12_values)] if scc12_values else None,
+    'scc12_a_req_value_range_mps2': [min(v['a_req_value_mps2'] for v in scc12_values), max(v['a_req_value_mps2'] for v in scc12_values)] if scc12_values else None,
     'status_counts': {str(status): count for status, count in sorted(status_counts.items())},
     'usable_lead_samples': len(valid),
     'median_interval_ms': statistics.median(intervals_ms) if intervals_ms else None,

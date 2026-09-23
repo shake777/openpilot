@@ -3,12 +3,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.c4_diagnostics.analyze_scc11 import analyze, decode_scc11
+from tools.c4_diagnostics.analyze_scc11 import analyze, decode_scc11, decode_scc12
 from tools.c4_diagnostics.radar_capture import MAGIC, encode_record
 
 
-def pack_scc11(status: int, distance_raw: int, speed_raw: int, lateral_raw: int) -> bytes:
-  bits = (status << 22) | (lateral_raw << 24) | (distance_raw << 33) | (speed_raw << 44)
+def pack_scc11(status: int, distance_raw: int, speed_raw: int, lateral_raw: int, obj_valid: int = 1) -> bytes:
+  bits = (obj_valid << 16) | (status << 22) | (lateral_raw << 24) | (distance_raw << 33) | (speed_raw << 44)
   return bits.to_bytes(8, 'little')
 
 
@@ -16,11 +16,30 @@ class TestAnalyzeScc11(unittest.TestCase):
   def test_decode_uses_current_generic_dbc_layout(self):
     decoded = decode_scc11(pack_scc11(1, 423, 1676, 207))
     self.assertEqual(decoded, {
+      'obj_valid': True,
       'status': 1,
       'distance_m': 42.3,
       'relative_speed_mps': -2.4,
       'lateral_position_m': 0.7,
     })
+
+  def test_invalid_object_bit_excludes_selected_lead(self):
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / 'invalid.c4radar'
+      path.write_bytes(MAGIC + encode_record(0, 0x420, 0, pack_scc11(1, 300, 1650, 200, obj_valid=0)))
+      report = analyze(path)
+    self.assertEqual(report['obj_valid_frames'], 0)
+    self.assertEqual(report['usable_lead_samples'], 0)
+
+  def test_scc12_acceleration_decodes_dbc_fields(self):
+    data = ((1023 << 24) | (1123 << 37)).to_bytes(8, 'little')
+    self.assertEqual(decode_scc12(data), {'a_req_raw_mps2': 0.0, 'a_req_value_mps2': 1.0})
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / 'scc12.c4radar'
+      path.write_bytes(MAGIC + encode_record(0, 0x421, 0, data))
+      report = analyze(path)
+    self.assertEqual(report['scc12_received_frames'], 1)
+    self.assertEqual(report['scc12_a_req_value_range_mps2'], [1.0, 1.0])
 
   def test_received_bus_excludes_echo_and_other_bus(self):
     with tempfile.TemporaryDirectory() as temp_dir:
