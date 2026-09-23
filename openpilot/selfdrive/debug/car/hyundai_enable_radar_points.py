@@ -334,7 +334,8 @@ if __name__ == "__main__":
                 report["session_keepalive_confirmed"] = True
                 print("[REQUEST SECURITY LEVEL 0x01 SEED ONCE]")
                 try:
-                  seed = uds_client.security_access(0x01)
+                  from tools.c4_diagnostics.seed_capture import capture_seed
+                  seed = capture_seed(uds_client, report)
                   report["status"] = "seed_accepted"
                   report["seed_length"] = len(seed)
                   print(f"K7 security seed request accepted ({len(seed)} bytes); no key was sent")
