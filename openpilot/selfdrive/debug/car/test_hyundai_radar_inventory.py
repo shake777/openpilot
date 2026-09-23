@@ -268,7 +268,13 @@ class RadarInventoryTests(unittest.TestCase):
     self.assertTrue(report['final_config_verified'])
     self.assertEqual(report['post_restore_config_hex'], '0002000000')
     self.assertNotIn('12345678', report_path.name)
-    self.assertNotIn('12345678', json.dumps(report))
+    self.assertEqual(report['seed_hex'], '12345678')
+    self.assertEqual([(entry['stage'], entry['request_hex']) for entry in report['diagnostic_sequence']], [
+      ('firmware_read', '22f100'), ('default_config_read', '220142'), ('session_enter', '1003'),
+      ('extended_config_read', '220142'), ('session_read', '22f186'), ('session_keepalive', '3e00'),
+      ('seed', '2701'), ('post_seed_read', '220142'), ('session_restore', '1001'),
+      ('post_restore_read', '220142')])
+    self.assertTrue(all(entry['status'] == 'ok' and entry['elapsed_s'] >= 0 for entry in report['diagnostic_sequence']))
     self.assertEqual(client.requests, [0xf100, 0x0142, 0x0142, 0xf186, 0x0142, 0x0142])
     client.security_access.assert_called_once_with(0x01)
     client.tester_present.assert_called_once_with()
@@ -365,6 +371,9 @@ class RadarInventoryTests(unittest.TestCase):
     self.assertEqual(code, 2)
     self.assertEqual(report['session_confirmation_source'], 'extended_response_and_0142')
     self.assertEqual(report['errors'][0]['nrc'], '0x31')
+    self.assertEqual(report['diagnostic_sequence'][4]['nrc'], '0x31')
+    self.assertEqual(report['diagnostic_sequence'][4]['request_hex'], '22f186')
+    self.assertEqual(report['diagnostic_sequence'][6]['request_hex'], '2701')
     self.assertEqual(report['seed_nrc'], '0x22')
     self.assertTrue(report['final_config_verified'])
     client.security_access.assert_called_once_with(0x01)
@@ -423,6 +432,8 @@ class RadarInventoryTests(unittest.TestCase):
     self.assertEqual(report['restore_status'], 'unconfirmed')
     self.assertEqual(report['post_restore_config_hex'], '0002000000')
     self.assertEqual(report['errors'][-1]['stage'], 'session_restore')
+    self.assertEqual(report['diagnostic_sequence'][-2]['status'], 'error')
+    self.assertEqual(report['diagnostic_sequence'][-1]['stage'], 'post_restore_read')
     client.write_data_by_identifier.assert_not_called()
 
   def test_k7_security_probe_post_seed_read_failure_keeps_seed_result(self):

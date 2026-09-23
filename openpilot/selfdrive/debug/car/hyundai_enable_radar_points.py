@@ -265,7 +265,7 @@ if __name__ == "__main__":
               "post_restore_config_hex": None, "final_config_verified": False,
               "security_level": "0x01", "seed_length": None, "default_session_restored": None,
               "restore_status": "not_attempted", "errors": [], "active_session_before_seed_hex": None,
-              "session_confirmation_source": None}
+              "session_confirmation_source": None, "diagnostic_sequence": []}
 
     def record_error(stage, error):
       entry = {"stage": stage, "error_type": type(error).__name__, "message": str(error)}
@@ -273,9 +273,28 @@ if __name__ == "__main__":
         entry["nrc"] = f"0x{error.error_code:02x}"
       report["errors"].append(entry)
 
+    def observed_request(stage, request_hex, operation):
+      entry = {"stage": stage, "request_hex": request_hex, "response_source": "uds_client_payload",
+               "started_monotonic": time.monotonic(), "status": "pending"}
+      report["diagnostic_sequence"].append(entry)
+      try:
+        value = operation()
+      except Exception as error:
+        entry.update(status="error", error_type=type(error).__name__)
+        if isinstance(error, NegativeResponseError):
+          entry["nrc"] = f"0x{error.error_code:02x}"
+        raise
+      else:
+        entry["status"] = "ok"
+        if isinstance(value, bytes):
+          entry["payload_hex"] = value.hex()
+        return value
+      finally:
+        entry["elapsed_s"] = time.monotonic() - entry["started_monotonic"]
+
     try:
-      fw_version = uds_client.read_data_by_identifier(0xf100)
-      current_config = uds_client.read_data_by_identifier(0x0142)
+      fw_version = observed_request("firmware_read", "22f100", lambda: uds_client.read_data_by_identifier(0xf100))
+      current_config = observed_request("default_config_read", "220142", lambda: uds_client.read_data_by_identifier(0x0142))
       report["firmware_hex"] = fw_version.hex()
       report["default_config_hex"] = current_config.hex()
       print(f"firmware: {fw_version!r}")
@@ -289,9 +308,9 @@ if __name__ == "__main__":
       else:
         print("[TRY STANDARD EXTENDED DIAGNOSTIC SESSION 0x03]")
         session_change_attempted = True
-        uds_client.diagnostic_session_control(SESSION_TYPE.EXTENDED_DIAGNOSTIC)
+        observed_request("session_enter", "1003", lambda: uds_client.diagnostic_session_control(SESSION_TYPE.EXTENDED_DIAGNOSTIC))
         session_entered = True
-        extended_config = uds_client.read_data_by_identifier(0x0142)
+        extended_config = observed_request("extended_config_read", "220142", lambda: uds_client.read_data_by_identifier(0x0142))
         report["extended_config_hex"] = extended_config.hex()
         print(f"extended-session config: 0x{extended_config.hex()}")
         if extended_config != K7_EXPERIMENTAL_CONFIG.default_config:
@@ -303,7 +322,7 @@ if __name__ == "__main__":
           if args.k7_security_probe:
             session_verified = False
             try:
-              active_session = uds_client.read_data_by_identifier(0xf186)
+              active_session = observed_request("session_read", "22f186", lambda: uds_client.read_data_by_identifier(0xf186))
             except (MessageTimeoutError, NegativeResponseError) as error:
               record_error("session_read", error)
               if isinstance(error, NegativeResponseError) and error.error_code == 0x31:
@@ -324,7 +343,7 @@ if __name__ == "__main__":
                 report["session_confirmation_source"] = "f186"
             if session_verified:
               try:
-                uds_client.tester_present()
+                observed_request("session_keepalive", "3e00", uds_client.tester_present)
               except (MessageTimeoutError, NegativeResponseError) as error:
                 record_error("session_keepalive", error)
                 report["status"] = "session_unverified"
@@ -335,7 +354,7 @@ if __name__ == "__main__":
                 print("[REQUEST SECURITY LEVEL 0x01 SEED ONCE]")
                 try:
                   from tools.c4_diagnostics.seed_capture import capture_seed
-                  seed = capture_seed(uds_client, report)
+                  seed = observed_request("seed", "2701", lambda: capture_seed(uds_client, report))
                   report["status"] = "seed_accepted"
                   report["seed_length"] = len(seed)
                   print(f"K7 security seed request accepted ({len(seed)} bytes); no key was sent")
@@ -351,7 +370,7 @@ if __name__ == "__main__":
                     result = 5
                   print(f"K7 security seed request rejected: {error}; no key was sent")
               try:
-                verified_config = uds_client.read_data_by_identifier(0x0142)
+                verified_config = observed_request("post_seed_read", "220142", lambda: uds_client.read_data_by_identifier(0x0142))
                 report["post_config_hex"] = verified_config.hex()
                 print(f"post-probe config: 0x{verified_config.hex()}")
                 if verified_config != K7_EXPERIMENTAL_CONFIG.default_config:
@@ -370,7 +389,7 @@ if __name__ == "__main__":
     finally:
       if session_change_attempted:
         try:
-          uds_client.diagnostic_session_control(0x01)
+          observed_request("session_restore", "1001", lambda: uds_client.diagnostic_session_control(0x01))
         except (MessageTimeoutError, NegativeResponseError) as error:
           record_error("session_restore", error)
           report["default_session_restored"] = False
@@ -379,7 +398,7 @@ if __name__ == "__main__":
           report["default_session_restored"] = True
           report["restore_status"] = "confirmed"
         try:
-          restored_config = uds_client.read_data_by_identifier(0x0142)
+          restored_config = observed_request("post_restore_read", "220142", lambda: uds_client.read_data_by_identifier(0x0142))
           report["post_restore_config_hex"] = restored_config.hex()
           report["final_config_verified"] = restored_config == K7_EXPERIMENTAL_CONFIG.default_config
         except (MessageTimeoutError, NegativeResponseError) as error:
