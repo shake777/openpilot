@@ -8,10 +8,35 @@ import unittest
 from unittest.mock import patch
 
 from tools.c4_diagnostics import parked_probe
-from tools.c4_diagnostics.auto_upload import pending_captures
+from tools.c4_diagnostics.auto_upload import pending_captures, upload_one
+from tools.c4_diagnostics.upload import UploadConfig, UploadError
 
 
 class TestParkedProbe(unittest.TestCase):
+  def test_batch_reports_auto_upload_and_retry(self):
+    with TemporaryDirectory() as directory:
+      root = Path(directory)
+      spool = root / 'spool'
+      spool.mkdir()
+      reports = [spool / 'k7-security-probe-session.json', spool / 'k7-security-probe-security.json',
+                 spool / 'k7-security-probe-status-test.json']
+      for report in reports:
+        report.write_text('{"status":"saved"}', encoding='utf-8')
+      state = {'schema': 2, 'uploaded': {}}
+      state_path = root / 'state.json'
+      config = UploadConfig('https://www.dayoutec.com/c4-diagnostics/api/v1/logs', 'test-key')
+      with patch('tools.c4_diagnostics.auto_upload.upload', side_effect=UploadError('offline')):
+        with self.assertRaises(UploadError):
+          upload_one(config, 'c4-test', state, state_path, pending_captures(spool, state)[0])
+      self.assertEqual(len(pending_captures(spool, state)), 3)
+      with patch('tools.c4_diagnostics.auto_upload.upload', return_value={'upload_id': 'received'}) as send:
+        while pending_captures(spool, state):
+          upload_one(config, 'c4-test', state, state_path, pending_captures(spool, state)[0])
+      self.assertEqual(send.call_count, 3)
+      self.assertEqual({call.args[3][0] for call in send.call_args_list}, set(reports))
+      self.assertEqual(pending_captures(spool, state), [])
+      self.assertEqual(set(json.loads(state_path.read_text())['uploaded']), {report.name for report in reports})
+
   def test_batch_survey_launch_requires_park_and_selects_one_worker(self):
     with patch.object(Path, 'exists', return_value=True), \
          patch.object(parked_probe, 'vehicle_ready_for_probe', return_value=True), \
