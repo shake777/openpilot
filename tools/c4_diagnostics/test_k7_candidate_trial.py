@@ -1,7 +1,8 @@
 # K7 레이더 후보의 거절 분류와 독립 복원 확인을 검증한다.
 import unittest
+from unittest.mock import patch
 
-from tools.c4_diagnostics.k7_candidate_trial import CANDIDATE, ORIGINAL, run_trial
+from tools.c4_diagnostics.k7_candidate_trial import CANDIDATE, ORIGINAL, observe_can, run_trial
 
 
 class Rejection(Exception):
@@ -36,14 +37,28 @@ class FakeClient:
 
 
 class TestK7CandidateTrial(unittest.TestCase):
+  def test_can_observation_uses_panda_address_data_bus_order(self):
+    class FakePanda:
+      def can_recv(self):
+        return [(0x500, b'\x01', 2), (0x420, b'\x00', 0)]
+
+    with patch('tools.c4_diagnostics.k7_candidate_trial.time.monotonic', side_effect=[0.0, 0.0, 1.0]):
+      result = observe_can(FakePanda())
+    self.assertEqual(result['track_address_bus_counts'], {'2:500': 1})
+    self.assertEqual(result['track_range_frames'], 1)
+    self.assertEqual(result['scc11_frames'], 1)
+
   def test_accepted_candidate_is_restored(self):
     client = FakeClient()
-    report = run_trial(client)
+    observations = iter(({'track_range_frames': 0}, {'track_range_frames': 2}, {'track_range_frames': 0}))
+    report = run_trial(client, observe=lambda: next(observations))
     self.assertEqual(report['status'], 'candidate_accepted')
     self.assertEqual(report['restore_status'], 'confirmed')
     self.assertEqual(client.writes, [CANDIDATE, ORIGINAL])
     self.assertEqual(client.config, ORIGINAL)
     self.assertEqual(client.session, 1)
+    self.assertEqual([report['can_observations'][key]['track_range_frames'] for key in
+                      ('before', 'candidate', 'restored')], [0, 2, 0])
 
   def test_out_of_range_does_not_prove_value_is_wrong(self):
     client = FakeClient()
@@ -53,6 +68,7 @@ class TestK7CandidateTrial(unittest.TestCase):
     self.assertEqual(report['errors'][0]['nrc'], '0x31')
     self.assertEqual(report['restore_status'], 'confirmed')
     self.assertEqual(client.config, ORIGINAL)
+    self.assertNotIn('candidate', report['can_observations'])
 
   def test_security_denial_does_not_reject_value(self):
     client = FakeClient()
@@ -60,6 +76,21 @@ class TestK7CandidateTrial(unittest.TestCase):
     report = run_trial(client)
     self.assertEqual(report['status'], 'prerequisite_blocked')
     self.assertEqual(report['restore_status'], 'confirmed')
+
+  def test_observation_failure_after_write_still_restores(self):
+    client = FakeClient()
+    calls = iter(({'track_range_frames': 0}, RuntimeError('CAN read failed')))
+
+    def observe():
+      value = next(calls)
+      if isinstance(value, Exception):
+        raise value
+      return value
+
+    report = run_trial(client, observe=observe)
+    self.assertEqual(client.writes, [CANDIDATE, ORIGINAL])
+    self.assertEqual(report['restore_status'], 'confirmed')
+    self.assertEqual(report['errors'][0]['stage'], 'candidate_can_observation')
 
   def test_restore_failure_is_unverified(self):
     client = FakeClient()

@@ -276,6 +276,8 @@ def run_worker(characterize=False, verify_parked=False, compare_sessions=False, 
         status["session_comparison"] = report.get("session_comparison")
         status["comparison_complete"] = report.get("comparison_complete")
         status["summary"] = summarize_report(report)
+        if report.get("can_observations"):
+          status["summary"]["can_observations"] = report["can_observations"]
       else:
         if candidate_trial:
           status['trial_report_missing'] = True

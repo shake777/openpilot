@@ -14,6 +14,25 @@ ORIGINAL = bytes.fromhex('0002000000')
 CANDIDATE = bytes.fromhex('0002000001')
 
 
+def observe_can(panda, duration_s=1.0):
+  end = time.monotonic() + duration_s
+  counts = {}
+  total = scc11 = 0
+  while time.monotonic() < end:
+    frames = panda.can_recv()
+    total += len(frames)
+    for address, _data, bus in frames:
+      if address == 0x420:
+        scc11 += 1
+      if 0x500 <= address <= 0x53f:
+        key = f'{bus}:{address:03x}'
+        counts[key] = counts.get(key, 0) + 1
+    if not frames:
+      time.sleep(0.01)
+  return {'duration_s': duration_s, 'frames_total': total, 'scc11_frames': scc11,
+          'track_range_frames': sum(counts.values()), 'track_address_bus_counts': counts}
+
+
 def error_record(stage, error):
   record = {'stage': stage, 'error_type': type(error).__name__, 'message': str(error)}
   nrc = getattr(error, 'error_code', None)
@@ -22,13 +41,14 @@ def error_record(stage, error):
   return record
 
 
-def run_trial(client, restore_only=False):
+def run_trial(client, restore_only=False, observe=None):
   report = {'schema': 'c4-k7-candidate-trial-v1', 'created_at': time.time(),
             'mode': 'restore_only' if restore_only else 'candidate_trial',
             'candidate_hex': CANDIDATE.hex(), 'original_hex': ORIGINAL.hex(),
             'status': 'not_started', 'write_attempted': False, 'write_acknowledged': False,
             'restore_write_attempted': False, 'final_config_verified': False,
-            'default_session_restored': False, 'restore_status': 'not_attempted', 'errors': []}
+            'default_session_restored': False, 'restore_status': 'not_attempted',
+            'can_observations': {}, 'errors': []}
   firmware_matched = False
   session_entered = False
   session_attempted = False
@@ -56,6 +76,10 @@ def run_trial(client, restore_only=False):
       return report
     may_restore = restore_only
 
+    if observe is not None and not restore_only:
+      stage = 'baseline_can_observation'
+      report['can_observations']['before'] = observe()
+
     stage = 'session_enter'
     session_attempted = True
     client.diagnostic_session_control(0x03)
@@ -76,6 +100,9 @@ def run_trial(client, restore_only=False):
       observed = client.read_data_by_identifier(DATA_ID)
       report['candidate_readback_hex'] = observed.hex()
       report['status'] = 'candidate_accepted' if observed == CANDIDATE else 'candidate_readback_mismatch'
+      if observed == CANDIDATE and observe is not None:
+        stage = 'candidate_can_observation'
+        report['can_observations']['candidate'] = observe()
   except Exception as error:
     report['errors'].append(error_record(stage, error))
     nrc = getattr(error, 'error_code', None)
@@ -114,6 +141,11 @@ def run_trial(client, restore_only=False):
         report['default_session_restored'] = True
       report['restore_status'] = ('confirmed' if report['final_config_verified'] and report['default_session_restored']
                                   else 'unverified')
+      if report['restore_status'] == 'confirmed' and observe is not None and not restore_only:
+        try:
+          report['can_observations']['restored'] = observe()
+        except Exception as error:
+          report['errors'].append(error_record('restored_can_observation', error))
       if restore_only and report['restore_status'] == 'confirmed' and report['status'] == 'not_started':
         report['status'] = 'original_restored'
   return report
@@ -134,7 +166,8 @@ def main():
   panda = Panda()
   try:
     panda.set_safety_mode(CarParams.SafetyModel.elm327)
-    report = run_trial(UdsClient(panda, 0x7d0, bus=0), args.restore_only)
+    report = run_trial(UdsClient(panda, 0x7d0, bus=0), args.restore_only,
+                       observe=None if args.restore_only else lambda: observe_can(panda))
   finally:
     panda.close()
   args.output.parent.mkdir(parents=True, exist_ok=True)
