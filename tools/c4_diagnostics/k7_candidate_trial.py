@@ -165,7 +165,8 @@ def run_security_survey(client):
   report = {'schema': 'c4-k7-security-survey-v1', 'created_at': time.time(),
             'mode': 'security_survey', 'status': 'not_started', 'security_level': '0x03',
             'key_sent': False, 'write_performed': False, 'final_config_verified': False,
-            'default_session_restored': False, 'restore_status': 'not_attempted', 'errors': []}
+            'default_session_restored': False, 'restore_status': 'not_attempted',
+            'security_exchanges': [], 'errors': []}
   firmware_matched = False
   session_attempted = False
   stage = 'firmware_read'
@@ -191,10 +192,24 @@ def run_security_survey(client):
     if extended != ORIGINAL:
       report['status'] = 'extended_config_mismatch'
       return report
-    stage = 'security_seed_03'
-    seed = client.security_access(0x03)
-    report['seed_length'] = len(seed)
-    report['status'] = 'seed_accepted'
+    for level in (0x03, 0x05):
+      stage = f'security_seed_{level:02x}'
+      report['security_level'] = f'0x{level:02x}'
+      try:
+        seed = client.security_access(level)
+        report['seed_length'] = len(seed)
+        report['security_exchanges'].append({'level': report['security_level'], 'status': 'accepted',
+                                             'seed_length': len(seed)})
+        report['status'] = 'seed_accepted'
+        break
+      except Exception as error:
+        entry = error_record(stage, error)
+        report['errors'].append(entry)
+        report['security_exchanges'].append({'level': report['security_level'], 'status': 'rejected',
+                                             **({'nrc': entry['nrc']} if 'nrc' in entry else {})})
+        report['status'] = 'seed_rejected'
+        if level == 0x05 or getattr(error, 'error_code', None) not in (0x12, 0x31):
+          break
   except Exception as error:
     report['errors'].append(error_record(stage, error))
     report['status'] = 'seed_rejected' if stage == 'security_seed_03' else 'diagnostic_error'

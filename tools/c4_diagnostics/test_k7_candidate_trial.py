@@ -39,8 +39,9 @@ class FakeClient:
 
   def security_access(self, level):
     self.security_requests.append(level)
-    if self.reject_security:
-      raise Rejection(self.reject_security)
+    rejection = self.reject_security.get(level) if isinstance(self.reject_security, dict) else self.reject_security
+    if rejection:
+      raise Rejection(rejection)
     return b'\x12\x34'
 
 
@@ -65,6 +66,27 @@ class TestK7CandidateTrial(unittest.TestCase):
     self.assertEqual(report['status'], 'seed_rejected')
     self.assertEqual(report['errors'][0]['stage'], 'security_seed_03')
     self.assertEqual(report['errors'][0]['nrc'], '0x31')
+    self.assertEqual(client.security_requests, [0x03, 0x05])
+    self.assertEqual([entry['level'] for entry in report['security_exchanges']], ['0x03', '0x05'])
+    self.assertEqual(report['restore_status'], 'confirmed')
+    self.assertEqual(client.writes, [])
+
+  def test_security_survey_falls_back_once_when_level_03_unsupported(self):
+    client = FakeClient()
+    client.reject_security = {0x03: 0x12}
+    report = run_security_survey(client)
+    self.assertEqual(client.security_requests, [0x03, 0x05])
+    self.assertEqual(report['security_level'], '0x05')
+    self.assertEqual(report['status'], 'seed_accepted')
+    self.assertEqual([entry['status'] for entry in report['security_exchanges']], ['rejected', 'accepted'])
+    self.assertEqual(client.writes, [])
+
+  def test_security_survey_stops_on_security_denial(self):
+    client = FakeClient()
+    client.reject_security = 0x33
+    report = run_security_survey(client)
+    self.assertEqual(client.security_requests, [0x03])
+    self.assertEqual(report['status'], 'seed_rejected')
     self.assertEqual(report['restore_status'], 'confirmed')
     self.assertEqual(client.writes, [])
 

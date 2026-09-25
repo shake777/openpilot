@@ -73,7 +73,7 @@ class TestParkedProbe(unittest.TestCase):
     summary = parked_probe.summarize_report(report)
     self.assertEqual(summary['error_counts'], {'0x31': 1})
     self.assertEqual(summary['security'], {
-      'status': 'seed_accepted', 'seed_length': 2,
+      'status': 'seed_accepted', 'security_level': '0x01', 'seed_length': 2,
       'session_confirmation_source': 'extended_response_and_0142',
       'session_keepalive_confirmed': True, 'key_sent': False, 'write_performed': False,
       'f186_unsupported': True, 'configuration_unchanged_verified': True})

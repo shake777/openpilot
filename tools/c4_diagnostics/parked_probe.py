@@ -171,8 +171,9 @@ def summarize_report(report):
                                          "post_config_hex", "post_restore_config_hex")]
   if report.get('mode') == 'security_survey':
     configs = [report.get(key) for key in ('initial_config_hex', 'extended_config_hex', 'final_config_hex')]
-  security = ({key: report[key] for key in ("status", "seed_length", "session_confirmation_source",
-                                               "session_keepalive_confirmed", "key_sent", "write_performed") if key in report}
+  security = ({key: report[key] for key in ("status", "security_level", "security_exchanges", "seed_length",
+                                               "session_confirmation_source", "session_keepalive_confirmed",
+                                               "key_sent", "write_performed") if key in report}
               if "security_level" in report else {})
   if security:
     security["f186_unsupported"] = any(error.get("stage") == "session_read" and error.get("nrc") == "0x31"
