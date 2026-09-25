@@ -272,6 +272,8 @@ def run_worker(characterize=False, verify_parked=False, compare_sessions=False, 
           status["restore_status"] = report.get("restore_status")
           status["final_config_verified"] = report.get("final_config_verified")
         status["report_status"] = report.get("status")
+        if report.get("blocked_by"):
+          status["blocked_by"] = report["blocked_by"]
         status["dtc_changed"] = report.get("dtc_changed")
         status["session_comparison"] = report.get("session_comparison")
         status["comparison_complete"] = report.get("comparison_complete")

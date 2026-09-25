@@ -17,6 +17,8 @@ CANDIDATE = bytes.fromhex('0002000001')
 def observe_can(panda, duration_s=1.0):
   end = time.monotonic() + duration_s
   counts = {}
+  lengths = {}
+  legacy_states = {}
   total = scc11 = 0
   while time.monotonic() < end:
     frames = panda.can_recv()
@@ -27,10 +29,16 @@ def observe_can(panda, duration_s=1.0):
       if 0x500 <= address <= 0x53f:
         key = f'{bus}:{address:03x}'
         counts[key] = counts.get(key, 0) + 1
+        length_key = f'{bus}:{len(_data)}'
+        lengths[length_key] = lengths.get(length_key, 0) + 1
+        if len(_data) == 8:
+          state_key = f'{bus}:{(int.from_bytes(_data, "big") >> 53) & 7}'
+          legacy_states[state_key] = legacy_states.get(state_key, 0) + 1
     if not frames:
       time.sleep(0.01)
   return {'duration_s': duration_s, 'frames_total': total, 'scc11_frames': scc11,
-          'track_range_frames': sum(counts.values()), 'track_address_bus_counts': counts}
+          'track_range_frames': sum(counts.values()), 'track_address_bus_counts': counts,
+          'track_dlc_by_bus': lengths, 'legacy_state_by_bus': legacy_states}
 
 
 def error_record(stage, error):
@@ -112,6 +120,8 @@ def run_trial(client, restore_only=False, observe=None):
       report['status'] = 'format_rejected'
     elif stage == 'candidate_write' and nrc in (0x22, 0x33, 0x35, 0x36, 0x37):
       report['status'] = 'prerequisite_blocked'
+      if nrc == 0x33:
+        report['blocked_by'] = 'security_access_denied'
     else:
       report['status'] = 'diagnostic_error'
   finally:

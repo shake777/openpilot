@@ -40,13 +40,15 @@ class TestK7CandidateTrial(unittest.TestCase):
   def test_can_observation_uses_panda_address_data_bus_order(self):
     class FakePanda:
       def can_recv(self):
-        return [(0x500, b'\x01', 2), (0x420, b'\x00', 0)]
+        return [(0x500, b'\x01', 2), (0x501, b'\x00\x80' + b'\x00' * 6, 1), (0x420, b'\x00', 0)]
 
     with patch('tools.c4_diagnostics.k7_candidate_trial.time.monotonic', side_effect=[0.0, 0.0, 1.0]):
       result = observe_can(FakePanda())
-    self.assertEqual(result['track_address_bus_counts'], {'2:500': 1})
-    self.assertEqual(result['track_range_frames'], 1)
+    self.assertEqual(result['track_address_bus_counts'], {'2:500': 1, '1:501': 1})
+    self.assertEqual(result['track_range_frames'], 2)
     self.assertEqual(result['scc11_frames'], 1)
+    self.assertEqual(result['track_dlc_by_bus'], {'2:1': 1, '1:8': 1})
+    self.assertEqual(result['legacy_state_by_bus'], {'1:4': 1})
 
   def test_accepted_candidate_is_restored(self):
     client = FakeClient()
@@ -75,6 +77,7 @@ class TestK7CandidateTrial(unittest.TestCase):
     client.reject_candidate = 0x33
     report = run_trial(client)
     self.assertEqual(report['status'], 'prerequisite_blocked')
+    self.assertEqual(report['blocked_by'], 'security_access_denied')
     self.assertEqual(report['restore_status'], 'confirmed')
 
   def test_observation_failure_after_write_still_restores(self):
