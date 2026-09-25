@@ -109,3 +109,11 @@ It sends no key or configuration write. The existing parked preflight, isolated 
 default-session restoration, original-configuration verification, and automatic report upload
 still apply. Review the DAYOU report and `/data/c4-diagnostics/k7-parked-probe-status.json`
 before driving. A positive seed response does not authenticate or enable radar tracks.
+
+For one parked visit, `python3 tools/c4_diagnostics/parked_probe.py --batch-survey`
+runs the existing default/extended-session characterization and then the bounded security
+survey in one isolated comma-stop window. Each step gets its own uploaded JSON report.
+The second step is skipped if the first does not verify the original configuration,
+default-session restoration, or reports a DTC change. The final status includes
+`batch_steps`; check both reports and the comma restart before driving. This batch
+contains no key, configuration write, or new radar-track activation attempt.

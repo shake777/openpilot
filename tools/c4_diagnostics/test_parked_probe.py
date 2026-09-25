@@ -12,6 +12,68 @@ from tools.c4_diagnostics.auto_upload import pending_captures
 
 
 class TestParkedProbe(unittest.TestCase):
+  def test_batch_survey_launch_requires_park_and_selects_one_worker(self):
+    with patch.object(Path, 'exists', return_value=True), \
+         patch.object(parked_probe, 'vehicle_ready_for_probe', return_value=True), \
+         patch('builtins.input', side_effect=AssertionError('text prompt')), \
+         patch.object(parked_probe, 'run_command', return_value=SimpleNamespace(returncode=0)) as run:
+      self.assertEqual(parked_probe.start_from_web(batch_survey=True), 0)
+    command = run.call_args.args[0]
+    self.assertIn('--batch-survey', command)
+    self.assertIn('--verify-parked', command)
+    self.assertNotIn('--candidate-trial', command)
+
+  def test_batch_survey_runs_two_read_only_steps_in_one_service_window(self):
+    with TemporaryDirectory() as directory:
+      root = Path(directory)
+      reports = [root / 'spool/k7-security-probe-session.json', root / 'spool/k7-security-probe-security.json']
+      calls = []
+
+      def run(command, **_kwargs):
+        calls.append(command)
+        if '--k7-characterize' in command or '--security-survey' in command:
+          path = reports[0] if '--k7-characterize' in command else reports[1]
+          path.parent.mkdir(exist_ok=True)
+          path.write_text(json.dumps({'status': 'collected_with_errors', 'restore_status': 'confirmed',
+                                      'final_config_verified': True, 'dtc_changed': False}))
+        return SimpleNamespace(returncode=2 if '--k7-characterize' in command else 0)
+
+      with patch.object(parked_probe, 'RESULT_DIR', root), patch.object(parked_probe, 'STATUS_FILE', root / 'status.json'), \
+           patch.object(parked_probe, 'LOG_FILE', root / 'probe.log'), \
+           patch.object(parked_probe, 'probe_report_path', side_effect=reports), \
+           patch.object(parked_probe, 'vehicle_ready_for_probe', return_value=True), \
+           patch.object(parked_probe, 'wait_for_pandad', return_value=True), patch.object(parked_probe.time, 'sleep'), \
+           patch.object(parked_probe, 'run_command', side_effect=run):
+        self.assertEqual(parked_probe.run_worker(verify_parked=True, batch_survey=True), 0)
+      status = json.loads((root / 'status.json').read_text())
+      self.assertEqual([step['name'] for step in status['batch_steps']], ['session_comparison', 'security_survey'])
+      self.assertEqual(len([call for call in calls if call[:3] == ['systemctl', 'stop', 'comma']]), 1)
+      self.assertEqual(len(pending_captures(reports[0].parent, {'uploaded': {}})), 3)
+
+  def test_batch_survey_stops_after_unverified_restore(self):
+    with TemporaryDirectory() as directory:
+      root = Path(directory)
+      report = root / 'spool/session.json'
+      calls = []
+
+      def run(command, **_kwargs):
+        calls.append(command)
+        if '--k7-characterize' in command:
+          report.parent.mkdir(exist_ok=True)
+          report.write_text(json.dumps({'status': 'restore_unverified', 'restore_status': 'unconfirmed',
+                                        'final_config_verified': False}))
+        return SimpleNamespace(returncode=0)
+
+      with patch.object(parked_probe, 'RESULT_DIR', root), patch.object(parked_probe, 'STATUS_FILE', root / 'status.json'), \
+           patch.object(parked_probe, 'LOG_FILE', root / 'probe.log'), \
+           patch.object(parked_probe, 'probe_report_path', return_value=report), \
+           patch.object(parked_probe, 'vehicle_ready_for_probe', return_value=True), \
+           patch.object(parked_probe, 'wait_for_pandad', return_value=True), patch.object(parked_probe.time, 'sleep'), \
+           patch.object(parked_probe, 'run_command', side_effect=run):
+        self.assertEqual(parked_probe.run_worker(verify_parked=True, batch_survey=True), 3)
+      self.assertFalse(any('--security-survey' in call for call in calls))
+      self.assertIn('remaining steps skipped', json.loads((root / 'status.json').read_text())['error'])
+
   def test_security_survey_command_and_summary(self):
     command = parked_probe.probe_command(Path('/tmp/report.json'), security_survey=True)
     self.assertIn('--security-survey', command)
