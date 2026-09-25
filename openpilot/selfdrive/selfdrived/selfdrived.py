@@ -136,6 +136,7 @@ class SelfdriveD:
     self.dm_lockout_set = False
     self.cutin_audio_tracker = CutinAlertTracker()
     self.dm_uncertain_alerted = False
+    self.update_reboot_alerted = False
     self.big_model_loading = False
     self.big_model_active = False
     self.big_model_ready_t = 0.0
@@ -202,6 +203,8 @@ class SelfdriveD:
     if not self.initialized:
       self.events.add(EventName.selfdriveInitializing)
       return
+
+    self.update_reboot_alert()
 
     # Check for user bookmark press (bookmark button or end of LKAS button feedback)
     if self.sm.updated['userBookmark']:
@@ -506,6 +509,15 @@ class SelfdriveD:
     #    self.params.put_nonblocking('LongitudinalPersonality', str(self.personality))
     #    self.events.add(EventName.personalityChanged)
 
+  def update_reboot_alert(self):
+    # One NNFF-style notice per onroad session, after startup alerts finish.
+    # Use the manager's fixed startup identity across ignition cycles.
+    if (not REPLAY and not SIMULATION and not self.update_reboot_alerted
+        and self.sm.frame * DT_CTRL >= 15.0 and self.sm.all_checks(['managerState'])
+        and self.sm['managerState'].rebootRequired):
+      self.events.add(EventName.updateRebootRequired)
+      self.update_reboot_alerted = True
+
   def data_sample(self):
     car_state = messaging.recv_one(self.car_state_sock)
     CS = car_state.carState if car_state else self.CS_prev
@@ -636,7 +648,9 @@ class SelfdriveD:
 
 
 def main():
-  config_realtime_process(4, Priority.CTRL_HIGH)
+  # Pair short 100Hz state/control work on core6, leaving core4 for planning
+  # and radar preprocessing. Camerad remains SCHED_OTHER on the same core.
+  config_realtime_process(6, Priority.CTRL_HIGH)
   s = SelfdriveD()
   s.run()
 
