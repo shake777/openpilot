@@ -90,6 +90,26 @@ class TestK7CandidateTrial(unittest.TestCase):
     self.assertEqual(report['restore_status'], 'confirmed')
     self.assertEqual(client.writes, [])
 
+  def test_security_survey_records_dtc_and_can_before_after(self):
+    client = FakeClient()
+    dtcs = iter((b'\x11', b'\x11'))
+    observations = iter(({'track_range_frames': 0}, {'track_range_frames': 0}))
+    report = run_security_survey(client, observe=lambda: next(observations), read_dtc=lambda: next(dtcs))
+    self.assertFalse(report['dtc_changed'])
+    self.assertEqual(report['dtc_before_hex'], '11')
+    self.assertEqual(report['dtc_after_hex'], '11')
+    self.assertEqual(set(report['can_observations']), {'before', 'restored'})
+    self.assertEqual(client.writes, [])
+
+  def test_security_survey_flags_changed_dtc_for_review(self):
+    client = FakeClient()
+    dtcs = iter((b'\x11', b'\x12'))
+    report = run_security_survey(client, read_dtc=lambda: next(dtcs))
+    self.assertTrue(report['dtc_changed'])
+    self.assertEqual(report['status'], 'dtc_changed_review_required')
+    self.assertEqual(report['restore_status'], 'confirmed')
+    self.assertEqual(client.writes, [])
+
   def test_security_survey_requires_original_configuration(self):
     client = FakeClient()
     client.config = CANDIDATE

@@ -103,7 +103,8 @@ The explicit `python3 tools/c4_diagnostics/parked_probe.py --security-survey` co
 the exact K7 firmware and original `0142=0002000000`, enters extended session, and sends
 one `27 03` seed request. Only if that request returns unsupported `0x12` or `0x31`, it
 sends one `27 05` request in the same parked run. Other responses stop the survey.
-It records only seed lengths or rejection codes, not seed bytes.
+It records only seed lengths or rejection codes, not seed bytes. The same run compares raw
+DTC responses and bounded CAN observations before and after the diagnostic session.
 It sends no key or configuration write. The existing parked preflight, isolated service,
 default-session restoration, original-configuration verification, and automatic report upload
 still apply. Review the DAYOU report and `/data/c4-diagnostics/k7-parked-probe-status.json`

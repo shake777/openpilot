@@ -161,14 +161,15 @@ def run_trial(client, restore_only=False, observe=None):
   return report
 
 
-def run_security_survey(client):
+def run_security_survey(client, observe=None, read_dtc=None):
   report = {'schema': 'c4-k7-security-survey-v1', 'created_at': time.time(),
             'mode': 'security_survey', 'status': 'not_started', 'security_level': '0x03',
             'key_sent': False, 'write_performed': False, 'final_config_verified': False,
             'default_session_restored': False, 'restore_status': 'not_attempted',
-            'security_exchanges': [], 'errors': []}
+            'security_exchanges': [], 'can_observations': {}, 'dtc_changed': None, 'errors': []}
   firmware_matched = False
   session_attempted = False
+  dtc_before = None
   stage = 'firmware_read'
   try:
     firmware = client.read_data_by_identifier(0xf100)
@@ -183,6 +184,17 @@ def run_security_survey(client):
     if initial != ORIGINAL:
       report['status'] = 'initial_config_mismatch'
       return report
+    if read_dtc is not None:
+      try:
+        dtc_before = read_dtc()
+        report['dtc_before_hex'] = dtc_before.hex()
+      except Exception as error:
+        report['errors'].append(error_record('dtc_before', error))
+    if observe is not None:
+      try:
+        report['can_observations']['before'] = observe()
+      except Exception as error:
+        report['errors'].append(error_record('can_before', error))
     stage = 'session_enter'
     session_attempted = True
     client.diagnostic_session_control(0x03)
@@ -231,6 +243,21 @@ def run_security_survey(client):
         report['default_session_restored'] = True
       report['restore_status'] = ('confirmed' if report['final_config_verified'] and report['default_session_restored']
                                   else 'unverified')
+      if report['default_session_restored'] and read_dtc is not None:
+        try:
+          dtc_after = read_dtc()
+          report['dtc_after_hex'] = dtc_after.hex()
+          if dtc_before is not None:
+            report['dtc_changed'] = dtc_before != dtc_after
+            if report['dtc_changed']:
+              report['status'] = 'dtc_changed_review_required'
+        except Exception as error:
+          report['errors'].append(error_record('dtc_after', error))
+      if report['restore_status'] == 'confirmed' and observe is not None:
+        try:
+          report['can_observations']['restored'] = observe()
+        except Exception as error:
+          report['errors'].append(error_record('can_restored', error))
   return report
 
 
@@ -245,14 +272,16 @@ def main():
     parser.error('pandad must be confirmed stopped before radar diagnostics')
 
   from opendbc.car.structs import CarParams
-  from opendbc.car.uds import UdsClient
+  from opendbc.car.uds import DTC_REPORT_TYPE, DTC_STATUS_MASK_TYPE, UdsClient
   from panda.python import Panda
 
   panda = Panda()
   try:
     panda.set_safety_mode(CarParams.SafetyModel.elm327)
     client = UdsClient(panda, 0x7d0, bus=0)
-    report = (run_security_survey(client) if args.security_survey else
+    report = (run_security_survey(client, observe=lambda: observe_can(panda),
+                                  read_dtc=lambda: client.read_dtc_information(DTC_REPORT_TYPE.DTC_BY_STATUS_MASK,
+                                                                               DTC_STATUS_MASK_TYPE.ALL)) if args.security_survey else
               run_trial(client, args.restore_only, observe=None if args.restore_only else lambda: observe_can(panda)))
   finally:
     panda.close()
