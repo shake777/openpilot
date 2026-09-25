@@ -266,6 +266,10 @@ def run_worker(characterize=False, verify_parked=False, compare_sessions=False, 
             step.update(report_status=step_report.get('status'), restore_status=step_report.get('restore_status'),
                         final_config_verified=step_report.get('final_config_verified'),
                         dtc_changed=step_report.get('dtc_changed'))
+            step['summary'] = summarize_report(step_report)
+            for field in ('session_comparison', 'comparison_complete', 'can_observations'):
+              if step_report.get(field) is not None:
+                step['summary'][field] = step_report[field]
           if probe.returncode not in (0, 2) or step.get('restore_status') != 'confirmed' or not step.get('final_config_verified') or step.get('dtc_changed'):
             status['error'] = f'{name} restoration or DTC verification failed; remaining steps skipped'
             break

@@ -59,8 +59,14 @@ class TestParkedProbe(unittest.TestCase):
         if '--k7-characterize' in command or '--security-survey' in command:
           path = reports[0] if '--k7-characterize' in command else reports[1]
           path.parent.mkdir(exist_ok=True)
+          evidence = ({'reads': {'did_0142': {'status': 'ok', 'raw_hex': '0002000000'}},
+                       'session_comparison': {'0x0142': 'unchanged'}, 'comparison_complete': True}
+                      if '--k7-characterize' in command else
+                      {'mode': 'security_survey', 'security_level': '0x05',
+                       'security_exchanges': [{'level': '0x01', 'status': 'accepted', 'seed_length': 2}],
+                       'can_observations': {'after_seed_01': {'track_range_frames': 0}}})
           path.write_text(json.dumps({'status': 'collected_with_errors', 'restore_status': 'confirmed',
-                                      'final_config_verified': True, 'dtc_changed': False}))
+                                      'final_config_verified': True, 'dtc_changed': False, **evidence}))
         return SimpleNamespace(returncode=2 if '--k7-characterize' in command else 0)
 
       with patch.object(parked_probe, 'RESULT_DIR', root), patch.object(parked_probe, 'STATUS_FILE', root / 'status.json'), \
@@ -72,6 +78,10 @@ class TestParkedProbe(unittest.TestCase):
         self.assertEqual(parked_probe.run_worker(verify_parked=True, batch_survey=True), 0)
       status = json.loads((root / 'status.json').read_text())
       self.assertEqual([step['name'] for step in status['batch_steps']], ['session_comparison', 'security_survey'])
+      self.assertEqual(status['batch_steps'][0]['summary']['did_values']['0x0142']['default']['raw_hex'], '0002000000')
+      self.assertEqual(status['batch_steps'][0]['summary']['session_comparison'], {'0x0142': 'unchanged'})
+      self.assertEqual(status['batch_steps'][1]['summary']['security']['security_exchanges'][0]['level'], '0x01')
+      self.assertEqual(status['batch_steps'][1]['summary']['can_observations']['after_seed_01']['track_range_frames'], 0)
       self.assertEqual(len([call for call in calls if call[:3] == ['systemctl', 'stop', 'comma']]), 1)
       self.assertEqual(len(pending_captures(reports[0].parent, {'uploaded': {}})), 3)
 

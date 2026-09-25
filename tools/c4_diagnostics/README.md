@@ -121,6 +121,8 @@ The second step is skipped if the first does not verify the original configurati
 default-session restoration, or reports a DTC change. The final status includes
 `batch_steps`; check both reports and the comma restart before driving. This batch
 contains no key, configuration write, or new radar-track activation attempt.
+The status summary includes each step's DID comparison, security responses, and CAN
+observations so the two results can be reviewed together without another vehicle run.
 After comma restarts, the existing `c4_diagnostics` process uploads both reports and
 the status summary to the configured DAYOU endpoint when the network is available.
 Failed uploads stay pending and are retried; a queued file alone is not a server receipt.
