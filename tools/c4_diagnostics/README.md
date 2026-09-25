@@ -105,7 +105,10 @@ one `27 03` seed request. Only if that request returns unsupported `0x12` or `0x
 sends one `27 05` request in the same parked run. Other responses stop the survey.
 It records only seed lengths or rejection codes, not seed bytes. The same run compares raw
 DTC responses and bounded CAN observations before and after the diagnostic session.
-It sends no key or configuration write. The existing parked preflight, isolated service,
+It also captures bounded CAN snapshots before the session, in extended session, after each
+requested seed level, and after restoration. These snapshots distinguish observation states;
+raw `0x500`-range frame counts alone do not prove usable radar tracks. It sends no key or
+configuration write. The existing parked preflight, isolated service,
 default-session restoration, original-configuration verification, and automatic report upload
 still apply. Review the DAYOU report and `/data/c4-diagnostics/k7-parked-probe-status.json`
 before driving. A positive seed response does not authenticate or enable radar tracks.

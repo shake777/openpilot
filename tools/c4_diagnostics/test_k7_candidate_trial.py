@@ -93,12 +93,40 @@ class TestK7CandidateTrial(unittest.TestCase):
   def test_security_survey_records_dtc_and_can_before_after(self):
     client = FakeClient()
     dtcs = iter((b'\x11', b'\x11'))
-    observations = iter(({'track_range_frames': 0}, {'track_range_frames': 0}))
+    observations = iter(({'track_range_frames': count} for count in (0, 1, 2, 0)))
     report = run_security_survey(client, observe=lambda: next(observations), read_dtc=lambda: next(dtcs))
     self.assertFalse(report['dtc_changed'])
     self.assertEqual(report['dtc_before_hex'], '11')
     self.assertEqual(report['dtc_after_hex'], '11')
-    self.assertEqual(set(report['can_observations']), {'before', 'restored'})
+    self.assertEqual([report['can_observations'][key]['track_range_frames'] for key in
+                      ('before', 'extended_session', 'after_seed_03', 'restored')], [0, 1, 2, 0])
+    self.assertEqual(client.writes, [])
+
+  def test_security_survey_observes_each_supported_seed_request(self):
+    client = FakeClient()
+    client.reject_security = {0x03: 0x31}
+    observations = iter(({'track_range_frames': count} for count in range(5)))
+    report = run_security_survey(client, observe=lambda: next(observations))
+    self.assertEqual(client.security_requests, [0x03, 0x05])
+    self.assertEqual([report['can_observations'][key]['track_range_frames'] for key in
+                      ('before', 'extended_session', 'after_seed_03', 'after_seed_05', 'restored')], list(range(5)))
+    self.assertEqual(client.writes, [])
+
+  def test_security_survey_can_observation_error_keeps_restoration(self):
+    client = FakeClient()
+    observations = iter(({'track_range_frames': 0}, RuntimeError('CAN unavailable'),
+                         {'track_range_frames': 0}, {'track_range_frames': 0}))
+
+    def observe():
+      result = next(observations)
+      if isinstance(result, Exception):
+        raise result
+      return result
+
+    report = run_security_survey(client, observe=observe)
+    self.assertEqual(report['errors'][0]['stage'], 'can_extended_session')
+    self.assertEqual(report['restore_status'], 'confirmed')
+    self.assertEqual(client.session, 1)
     self.assertEqual(client.writes, [])
 
   def test_security_survey_flags_changed_dtc_for_review(self):

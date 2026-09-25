@@ -204,6 +204,11 @@ def run_security_survey(client, observe=None, read_dtc=None):
     if extended != ORIGINAL:
       report['status'] = 'extended_config_mismatch'
       return report
+    if observe is not None:
+      try:
+        report['can_observations']['extended_session'] = observe()
+      except Exception as error:
+        report['errors'].append(error_record('can_extended_session', error))
     for level in (0x03, 0x05):
       stage = f'security_seed_{level:02x}'
       report['security_level'] = f'0x{level:02x}'
@@ -222,6 +227,12 @@ def run_security_survey(client, observe=None, read_dtc=None):
         report['status'] = 'seed_rejected'
         if level == 0x05 or getattr(error, 'error_code', None) not in (0x12, 0x31):
           break
+      finally:
+        if observe is not None:
+          try:
+            report['can_observations'][f'after_seed_{level:02x}'] = observe()
+          except Exception as error:
+            report['errors'].append(error_record(f'can_after_seed_{level:02x}', error))
   except Exception as error:
     report['errors'].append(error_record(stage, error))
     report['status'] = 'seed_rejected' if stage == 'security_seed_03' else 'diagnostic_error'
