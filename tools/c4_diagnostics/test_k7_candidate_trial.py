@@ -2,7 +2,7 @@
 import unittest
 from unittest.mock import patch
 
-from tools.c4_diagnostics.k7_candidate_trial import CANDIDATE, ORIGINAL, observe_can, run_trial
+from tools.c4_diagnostics.k7_candidate_trial import CANDIDATE, ORIGINAL, observe_can, run_trial, run_security_survey
 
 
 class Rejection(Exception):
@@ -18,6 +18,8 @@ class FakeClient:
     self.reject_candidate = None
     self.reject_restore = False
     self.writes = []
+    self.security_requests = []
+    self.reject_security = None
 
   def read_data_by_identifier(self, did):
     if did == 0xf100:
@@ -35,8 +37,46 @@ class FakeClient:
       raise Rejection(0x33)
     self.config = value
 
+  def security_access(self, level):
+    self.security_requests.append(level)
+    if self.reject_security:
+      raise Rejection(self.reject_security)
+    return b'\x12\x34'
+
 
 class TestK7CandidateTrial(unittest.TestCase):
+  def test_security_survey_requests_only_one_seed_and_restores_session(self):
+    client = FakeClient()
+    report = run_security_survey(client)
+    self.assertEqual(client.security_requests, [0x03])
+    self.assertEqual(client.writes, [])
+    self.assertEqual(client.session, 1)
+    self.assertEqual(report['status'], 'seed_accepted')
+    self.assertEqual(report['seed_length'], 2)
+    self.assertEqual(report['restore_status'], 'confirmed')
+    self.assertFalse(report['key_sent'])
+    self.assertFalse(report['write_performed'])
+    self.assertNotIn('1234', str(report))
+
+  def test_security_survey_records_rejection_without_writing(self):
+    client = FakeClient()
+    client.reject_security = 0x31
+    report = run_security_survey(client)
+    self.assertEqual(report['status'], 'seed_rejected')
+    self.assertEqual(report['errors'][0]['stage'], 'security_seed_03')
+    self.assertEqual(report['errors'][0]['nrc'], '0x31')
+    self.assertEqual(report['restore_status'], 'confirmed')
+    self.assertEqual(client.writes, [])
+
+  def test_security_survey_requires_original_configuration(self):
+    client = FakeClient()
+    client.config = CANDIDATE
+    report = run_security_survey(client)
+    self.assertEqual(report['status'], 'initial_config_mismatch')
+    self.assertEqual(client.security_requests, [])
+    self.assertEqual(client.writes, [])
+    self.assertEqual(report['restore_status'], 'unverified')
+
   def test_can_observation_uses_panda_address_data_bus_order(self):
     class FakePanda:
       def can_recv(self):

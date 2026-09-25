@@ -96,3 +96,13 @@ Do not drive until `/data/c4-diagnostics/k7-parked-probe-status.json` shows `res
 does not establish radar-track output; a security or condition rejection does not disprove the
 candidate value. The next candidate is not selected automatically.
 An NRC `0x31` on the write is ambiguous: it does not by itself prove that the candidate bits are wrong.
+
+## K7 bounded security-level survey
+
+The explicit `python3 tools/c4_diagnostics/parked_probe.py --security-survey` command checks
+the exact K7 firmware and original `0142=0002000000`, enters extended session, and sends
+one `27 03` seed request. It records only the seed length or rejection code, not seed bytes.
+It sends no key or configuration write. The existing parked preflight, isolated service,
+default-session restoration, original-configuration verification, and automatic report upload
+still apply. Review the DAYOU report and `/data/c4-diagnostics/k7-parked-probe-status.json`
+before driving. A positive seed response does not authenticate or enable radar tracks.

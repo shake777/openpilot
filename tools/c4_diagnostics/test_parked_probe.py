@@ -12,6 +12,20 @@ from tools.c4_diagnostics.auto_upload import pending_captures
 
 
 class TestParkedProbe(unittest.TestCase):
+  def test_security_survey_command_and_summary(self):
+    command = parked_probe.probe_command(Path('/tmp/report.json'), security_survey=True)
+    self.assertIn('--security-survey', command)
+    self.assertNotIn('--restore-only', command)
+    report = {'mode': 'security_survey', 'status': 'seed_rejected', 'security_level': '0x03',
+              'key_sent': False, 'write_performed': False, 'initial_config_hex': '0002000000',
+              'extended_config_hex': '0002000000', 'final_config_hex': '0002000000',
+              'final_config_verified': True, 'errors': [{'stage': 'security_seed_03', 'nrc': '0x31'}]}
+    summary = parked_probe.summarize_report(report)
+    self.assertEqual(summary['error_counts'], {'0x31': 1})
+    self.assertEqual(summary['security']['status'], 'seed_rejected')
+    self.assertTrue(summary['security']['configuration_unchanged_verified'])
+    self.assertFalse(summary['security']['key_sent'])
+
   def test_boot_summary_runs_once_after_success_and_retries_failure(self):
     with TemporaryDirectory() as directory:
       root = Path(directory)
@@ -157,6 +171,24 @@ class TestParkedProbe(unittest.TestCase):
          patch.object(parked_probe, 'run_command') as run:
       self.assertEqual(parked_probe.start_from_web(candidate_trial=True), 2)
       run.assert_not_called()
+
+  def test_security_survey_launch_requires_park_and_selects_seed_only_mode(self):
+    with patch.object(Path, 'exists', return_value=True), \
+         patch.object(parked_probe, 'vehicle_ready_for_probe', return_value=False), \
+         patch.object(parked_probe, 'record_preflight_block'), \
+         patch('builtins.input', side_effect=AssertionError('text prompt')), \
+         patch.object(parked_probe, 'run_command') as run:
+      self.assertEqual(parked_probe.start_from_web(security_survey=True), 2)
+      run.assert_not_called()
+    with patch.object(Path, 'exists', return_value=True), \
+         patch.object(parked_probe, 'vehicle_ready_for_probe', return_value=True), \
+         patch('builtins.input', side_effect=AssertionError('text prompt')), \
+         patch.object(parked_probe, 'run_command', return_value=SimpleNamespace(returncode=0)) as run:
+      self.assertEqual(parked_probe.start_from_web(security_survey=True), 0)
+      command = run.call_args.args[0]
+      self.assertIn('--security-survey', command)
+      self.assertIn('--verify-parked', command)
+      self.assertNotIn('--candidate-trial', command)
 
   def test_candidate_worker_runs_independent_restore_and_queues_both_reports(self):
     with TemporaryDirectory() as directory:

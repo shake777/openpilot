@@ -161,9 +161,69 @@ def run_trial(client, restore_only=False, observe=None):
   return report
 
 
+def run_security_survey(client):
+  report = {'schema': 'c4-k7-security-survey-v1', 'created_at': time.time(),
+            'mode': 'security_survey', 'status': 'not_started', 'security_level': '0x03',
+            'key_sent': False, 'write_performed': False, 'final_config_verified': False,
+            'default_session_restored': False, 'restore_status': 'not_attempted', 'errors': []}
+  firmware_matched = False
+  session_attempted = False
+  stage = 'firmware_read'
+  try:
+    firmware = client.read_data_by_identifier(0xf100)
+    report['firmware_hex'] = firmware.hex()
+    firmware_matched = is_k7_experimental_firmware(firmware)
+    if not firmware_matched:
+      report['status'] = 'firmware_mismatch'
+      return report
+    stage = 'initial_config_read'
+    initial = client.read_data_by_identifier(DATA_ID)
+    report['initial_config_hex'] = initial.hex()
+    if initial != ORIGINAL:
+      report['status'] = 'initial_config_mismatch'
+      return report
+    stage = 'session_enter'
+    session_attempted = True
+    client.diagnostic_session_control(0x03)
+    stage = 'extended_config_read'
+    extended = client.read_data_by_identifier(DATA_ID)
+    report['extended_config_hex'] = extended.hex()
+    if extended != ORIGINAL:
+      report['status'] = 'extended_config_mismatch'
+      return report
+    stage = 'security_seed_03'
+    seed = client.security_access(0x03)
+    report['seed_length'] = len(seed)
+    report['status'] = 'seed_accepted'
+  except Exception as error:
+    report['errors'].append(error_record(stage, error))
+    report['status'] = 'seed_rejected' if stage == 'security_seed_03' else 'diagnostic_error'
+  finally:
+    if firmware_matched:
+      try:
+        final = client.read_data_by_identifier(DATA_ID)
+        report['final_config_hex'] = final.hex()
+        report['final_config_verified'] = final == ORIGINAL
+      except Exception as error:
+        report['errors'].append(error_record('final_config_read', error))
+      if session_attempted:
+        try:
+          client.diagnostic_session_control(0x01)
+          report['default_session_restored'] = True
+        except Exception as error:
+          report['errors'].append(error_record('session_restore', error))
+      else:
+        report['default_session_restored'] = True
+      report['restore_status'] = ('confirmed' if report['final_config_verified'] and report['default_session_restored']
+                                  else 'unverified')
+  return report
+
+
 def main():
   parser = argparse.ArgumentParser(description=__doc__)
-  parser.add_argument('--restore-only', action='store_true')
+  mode = parser.add_mutually_exclusive_group()
+  mode.add_argument('--restore-only', action='store_true')
+  mode.add_argument('--security-survey', action='store_true')
   parser.add_argument('--output', type=Path, required=True)
   args = parser.parse_args()
   if subprocess.run(['pidof', 'pandad'], check=False, stdout=subprocess.DEVNULL).returncode != 1:
@@ -176,8 +236,9 @@ def main():
   panda = Panda()
   try:
     panda.set_safety_mode(CarParams.SafetyModel.elm327)
-    report = run_trial(UdsClient(panda, 0x7d0, bus=0), args.restore_only,
-                       observe=None if args.restore_only else lambda: observe_can(panda))
+    client = UdsClient(panda, 0x7d0, bus=0)
+    report = (run_security_survey(client) if args.security_survey else
+              run_trial(client, args.restore_only, observe=None if args.restore_only else lambda: observe_can(panda)))
   finally:
     panda.close()
   args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -188,7 +249,7 @@ def main():
   print(json.dumps(report, ensure_ascii=False, sort_keys=True))
   if report['restore_status'] != 'confirmed':
     return 3
-  return 0 if report['status'] in ('candidate_accepted', 'already_original', 'original_restored') else 2
+  return 0 if report['status'] in ('candidate_accepted', 'already_original', 'original_restored', 'seed_accepted') else 2
 
 
 if __name__ == '__main__':
