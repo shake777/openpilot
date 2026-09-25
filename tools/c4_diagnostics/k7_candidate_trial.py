@@ -163,7 +163,7 @@ def run_trial(client, restore_only=False, observe=None):
 
 def run_security_survey(client, observe=None, read_dtc=None):
   report = {'schema': 'c4-k7-security-survey-v1', 'created_at': time.time(),
-            'mode': 'security_survey', 'status': 'not_started', 'security_level': '0x03',
+            'mode': 'security_survey', 'status': 'not_started', 'security_level': None,
             'key_sent': False, 'write_performed': False, 'final_config_verified': False,
             'default_session_restored': False, 'restore_status': 'not_attempted',
             'security_exchanges': [], 'can_observations': {}, 'dtc_changed': None, 'errors': []}
@@ -209,7 +209,7 @@ def run_security_survey(client, observe=None, read_dtc=None):
         report['can_observations']['extended_session'] = observe()
       except Exception as error:
         report['errors'].append(error_record('can_extended_session', error))
-    for level in (0x03, 0x05):
+    for level in (0x01, 0x03, 0x05):
       stage = f'security_seed_{level:02x}'
       report['security_level'] = f'0x{level:02x}'
       try:
@@ -218,14 +218,15 @@ def run_security_survey(client, observe=None, read_dtc=None):
         report['security_exchanges'].append({'level': report['security_level'], 'status': 'accepted',
                                              'seed_length': len(seed)})
         report['status'] = 'seed_accepted'
-        break
       except Exception as error:
         entry = error_record(stage, error)
         report['errors'].append(entry)
         report['security_exchanges'].append({'level': report['security_level'], 'status': 'rejected',
                                              **({'nrc': entry['nrc']} if 'nrc' in entry else {})})
-        report['status'] = 'seed_rejected'
-        if level == 0x05 or getattr(error, 'error_code', None) not in (0x12, 0x31):
+        if report['status'] != 'seed_accepted':
+          report['status'] = 'seed_rejected'
+        if getattr(error, 'error_code', None) not in (0x12, 0x31):
+          report['status'] = 'stopped_after_rejection'
           break
       finally:
         if observe is not None:
@@ -235,7 +236,7 @@ def run_security_survey(client, observe=None, read_dtc=None):
             report['errors'].append(error_record(f'can_after_seed_{level:02x}', error))
   except Exception as error:
     report['errors'].append(error_record(stage, error))
-    report['status'] = 'seed_rejected' if stage == 'security_seed_03' else 'diagnostic_error'
+    report['status'] = 'seed_rejected' if stage.startswith('security_seed_') else 'diagnostic_error'
   finally:
     if firmware_matched:
       try:

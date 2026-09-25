@@ -46,14 +46,15 @@ class FakeClient:
 
 
 class TestK7CandidateTrial(unittest.TestCase):
-  def test_security_survey_requests_only_one_seed_and_restores_session(self):
+  def test_security_survey_requests_three_seed_levels_and_restores_session(self):
     client = FakeClient()
     report = run_security_survey(client)
-    self.assertEqual(client.security_requests, [0x03])
+    self.assertEqual(client.security_requests, [0x01, 0x03, 0x05])
     self.assertEqual(client.writes, [])
     self.assertEqual(client.session, 1)
     self.assertEqual(report['status'], 'seed_accepted')
     self.assertEqual(report['seed_length'], 2)
+    self.assertEqual([entry['level'] for entry in report['security_exchanges']], ['0x01', '0x03', '0x05'])
     self.assertEqual(report['restore_status'], 'confirmed')
     self.assertFalse(report['key_sent'])
     self.assertFalse(report['write_performed'])
@@ -64,10 +65,10 @@ class TestK7CandidateTrial(unittest.TestCase):
     client.reject_security = 0x31
     report = run_security_survey(client)
     self.assertEqual(report['status'], 'seed_rejected')
-    self.assertEqual(report['errors'][0]['stage'], 'security_seed_03')
+    self.assertEqual(report['errors'][0]['stage'], 'security_seed_01')
     self.assertEqual(report['errors'][0]['nrc'], '0x31')
-    self.assertEqual(client.security_requests, [0x03, 0x05])
-    self.assertEqual([entry['level'] for entry in report['security_exchanges']], ['0x03', '0x05'])
+    self.assertEqual(client.security_requests, [0x01, 0x03, 0x05])
+    self.assertEqual([entry['level'] for entry in report['security_exchanges']], ['0x01', '0x03', '0x05'])
     self.assertEqual(report['restore_status'], 'confirmed')
     self.assertEqual(client.writes, [])
 
@@ -75,46 +76,59 @@ class TestK7CandidateTrial(unittest.TestCase):
     client = FakeClient()
     client.reject_security = {0x03: 0x12}
     report = run_security_survey(client)
-    self.assertEqual(client.security_requests, [0x03, 0x05])
+    self.assertEqual(client.security_requests, [0x01, 0x03, 0x05])
     self.assertEqual(report['security_level'], '0x05')
     self.assertEqual(report['status'], 'seed_accepted')
-    self.assertEqual([entry['status'] for entry in report['security_exchanges']], ['rejected', 'accepted'])
+    self.assertEqual([entry['status'] for entry in report['security_exchanges']], ['accepted', 'rejected', 'accepted'])
     self.assertEqual(client.writes, [])
 
   def test_security_survey_stops_on_security_denial(self):
     client = FakeClient()
     client.reject_security = 0x33
     report = run_security_survey(client)
-    self.assertEqual(client.security_requests, [0x03])
-    self.assertEqual(report['status'], 'seed_rejected')
+    self.assertEqual(client.security_requests, [0x01])
+    self.assertEqual(report['status'], 'stopped_after_rejection')
+    self.assertEqual(report['restore_status'], 'confirmed')
+    self.assertEqual(client.writes, [])
+
+  def test_security_survey_stops_after_later_level_denial(self):
+    client = FakeClient()
+    client.reject_security = {0x03: 0x33}
+    report = run_security_survey(client)
+    self.assertEqual(client.security_requests, [0x01, 0x03])
+    self.assertEqual([entry['status'] for entry in report['security_exchanges']], ['accepted', 'rejected'])
+    self.assertEqual(report['status'], 'stopped_after_rejection')
     self.assertEqual(report['restore_status'], 'confirmed')
     self.assertEqual(client.writes, [])
 
   def test_security_survey_records_dtc_and_can_before_after(self):
     client = FakeClient()
     dtcs = iter((b'\x11', b'\x11'))
-    observations = iter(({'track_range_frames': count} for count in (0, 1, 2, 0)))
+    observations = iter(({'track_range_frames': count} for count in (0, 1, 2, 3, 4, 0)))
     report = run_security_survey(client, observe=lambda: next(observations), read_dtc=lambda: next(dtcs))
     self.assertFalse(report['dtc_changed'])
     self.assertEqual(report['dtc_before_hex'], '11')
     self.assertEqual(report['dtc_after_hex'], '11')
     self.assertEqual([report['can_observations'][key]['track_range_frames'] for key in
-                      ('before', 'extended_session', 'after_seed_03', 'restored')], [0, 1, 2, 0])
+                      ('before', 'extended_session', 'after_seed_01', 'after_seed_03', 'after_seed_05', 'restored')],
+                     [0, 1, 2, 3, 4, 0])
     self.assertEqual(client.writes, [])
 
   def test_security_survey_observes_each_supported_seed_request(self):
     client = FakeClient()
     client.reject_security = {0x03: 0x31}
-    observations = iter(({'track_range_frames': count} for count in range(5)))
+    observations = iter(({'track_range_frames': count} for count in range(6)))
     report = run_security_survey(client, observe=lambda: next(observations))
-    self.assertEqual(client.security_requests, [0x03, 0x05])
+    self.assertEqual(client.security_requests, [0x01, 0x03, 0x05])
     self.assertEqual([report['can_observations'][key]['track_range_frames'] for key in
-                      ('before', 'extended_session', 'after_seed_03', 'after_seed_05', 'restored')], list(range(5)))
+                      ('before', 'extended_session', 'after_seed_01', 'after_seed_03', 'after_seed_05', 'restored')],
+                     list(range(6)))
     self.assertEqual(client.writes, [])
 
   def test_security_survey_can_observation_error_keeps_restoration(self):
     client = FakeClient()
     observations = iter(({'track_range_frames': 0}, RuntimeError('CAN unavailable'),
+                         {'track_range_frames': 0}, {'track_range_frames': 0},
                          {'track_range_frames': 0}, {'track_range_frames': 0}))
 
     def observe():

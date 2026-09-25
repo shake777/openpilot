@@ -351,7 +351,7 @@ def main():
   parser.add_argument('--characterize', action='store_true', help='collect bounded identity/configuration/DTC reads without session or security requests')
   parser.add_argument('--compare-sessions', action='store_true', help='with --characterize, compare default and extended-session reads')
   parser.add_argument('--candidate-trial', action='store_true', help='stationary K7 single-candidate trial with independent restore verification')
-  parser.add_argument('--security-survey', action='store_true', help='stationary K7 27 03 seed-only survey; no key or configuration write')
+  parser.add_argument('--security-survey', action='store_true', help='stationary K7 27 01/03/05 seed-only survey; no key or configuration write')
   parser.add_argument('--batch-survey', action='store_true', help='run session comparison and security survey in one parked service window')
   parser.add_argument('--from-recovery', action='store_true', help=argparse.SUPPRESS)
   parser.add_argument('--verify-parked', action='store_true', help=argparse.SUPPRESS)

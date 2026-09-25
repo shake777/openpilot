@@ -101,8 +101,9 @@ An NRC `0x31` on the write is ambiguous: it does not by itself prove that the ca
 
 The explicit `python3 tools/c4_diagnostics/parked_probe.py --security-survey` command checks
 the exact K7 firmware and original `0142=0002000000`, enters extended session, and sends
-one `27 03` seed request. Only if that request returns unsupported `0x12` or `0x31`, it
-sends one `27 05` request in the same parked run. Other responses stop the survey.
+one seed request each for `27 01`, `27 03`, and `27 05` in the same parked run. Accepted
+responses and unsupported `0x12`/`0x31` responses are recorded separately; other errors
+stop the survey without further requests.
 It records only seed lengths or rejection codes, not seed bytes. The same run compares raw
 DTC responses and bounded CAN observations before and after the diagnostic session.
 It also captures bounded CAN snapshots before the session, in extended session, after each
