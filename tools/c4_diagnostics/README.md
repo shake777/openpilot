@@ -126,3 +126,20 @@ observations so the two results can be reviewed together without another vehicle
 After comma restarts, the existing `c4_diagnostics` process uploads both reports and
 the status summary to the configured DAYOU endpoint when the network is available.
 Failed uploads stay pending and are retried; a queued file alone is not a server receipt.
+
+## K7 engine-off passive CAN address survey
+
+With ignition ON, engine OFF, gear P and the C4 running this branch, use the 6999 terminal.
+
+```sh
+cd /data/openpilot
+python3 tools/c4_diagnostics/parked_can_survey.py
+```
+
+This command checks live vehicle state, receives CAN for 30 seconds without sending any
+CAN/UDS request, and stops early if the parked state changes. It lists all bus 1
+address/DLC pairs plus `0x500`–`0x53f` candidates on buses 0 and 2, with counts and
+per-bit changes. It writes `k7-security-probe-passive-can-*.json` to the existing
+automatic-upload spool. A local queued file is not proof of DAYOU receipt. A parked
+zero-track result cannot rule out tracks that appear only while driving. The
+`0x500` range on source 128 is a send echo, not a received radar track.
