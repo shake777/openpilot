@@ -29,6 +29,37 @@ class Classic238Object:
     return cls(status=status, d_rel=d_rel, y_rel=-y_sensor, v_lead=v_lead, raw=raw)
 
 
+@dataclass(frozen=True)
+class Classic238Triplet:
+  obj: Classic238Object
+  rolling_counters: tuple[int, int, int]
+  object_sequence: int
+  second_frame: bytes
+  third_frame: bytes
+
+  @property
+  def counter_consistent(self) -> bool:
+    return len(set(self.rolling_counters)) == 1
+
+  @classmethod
+  def from_frames(cls, first: bytes, second: bytes, third: bytes) -> "Classic238Triplet":
+    if len(second) != 8 or len(third) != 8:
+      raise ValueError("classic 0x238 follow-up frames must be 8 bytes")
+
+    obj = Classic238Object.from_first_frame(first)
+    # The same two-bit rolling counter is present in all three frames. It was
+    # identical for every complete triplet in the K7, K5 and Sonata captures.
+    first_counter = (obj.raw >> 18) & 0x3
+    second_counter = (second[0] >> 6) & 0x3
+    third_counter = (third[0] >> 6) & 0x3
+    # This byte advances while a slot is active and normally freezes while it
+    # is empty. It does not reset to a fixed value when a new object appears,
+    # so expose it as a sequence value rather than claiming it is an object ID.
+    object_sequence = third[3]
+    return cls(obj=obj, rolling_counters=(first_counter, second_counter, third_counter),
+               object_sequence=object_sequence, second_frame=second, third_frame=third)
+
+
 def classic_238_address_role(address: int) -> tuple[int, int]:
   if not CLASSIC_238_START_ADDR <= address <= CLASSIC_238_END_ADDR:
     raise ValueError(f"address 0x{address:x} is outside classic 0x238 object range")
