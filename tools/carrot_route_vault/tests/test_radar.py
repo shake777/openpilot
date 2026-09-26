@@ -107,6 +107,26 @@ def test_export_matches_desktop_controller():
   json.dumps(payload, allow_nan=False)
 
 
+def test_export_adds_classic_238_objects_without_changing_selection():
+  from openpilot.selfdrive.carrot.radar.tools import radar_web_export as exporter
+  from openpilot.selfdrive.carrot.tests.test_radar_lead_simulator import frame, point
+  frames = [frame((point(41, 25.0, 0.0),), time_s=i * .05) for i in range(3)]
+  snapshot = (frames[1].mono_time_s, [{
+    'slot': 3, 'status': 2, 'd_rel': 30.0, 'y_rel': -1.0, 'v_lead': 20.0,
+    'object_sequence': 7, 'rolling_counter': 1, 'counter_consistent': True,
+    'confirmed_candidate': True,
+  }])
+  payload = exporter.export_frames(frames, classic_238_bus=1, classic_238_snapshots=[snapshot])
+  assert payload['schemaVersion'] == 2
+  assert payload['classic238'] == {
+    'available': True, 'bus': 1, 'controlConnected': False, 'confirmedStatus': 2,
+  }
+  assert payload['frames'][0]['classic_238_objects'] == []
+  assert payload['frames'][1]['classic_238_objects'][0]['slot'] == 3
+  assert payload['frames'][2]['classic_238_objects'][0]['confirmed_candidate'] is True
+  assert payload['frames'][1]['selection']['lead_one']['track_id'] == 41
+
+
 def test_graph_preserves_missing_scc_samples_and_desktop_series():
   from dataclasses import replace
   from openpilot.selfdrive.carrot.radar.tools import radar_web_export as exporter
