@@ -2,7 +2,7 @@ name: Carrot Routes image
 
 on:
   push:
-    branches: [carrot-wip]
+    branches: [carrot-wip-custom]
     paths:
       - 'tools/carrot_route_vault/**'
       - 'openpilot/selfdrive/carrot/radar_motion/**'
