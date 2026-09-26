@@ -64,7 +64,7 @@ def finish_summary(summary):
 def observe(duration_s=DURATION_S):
   from openpilot.cereal import messaging
 
-  sm = messaging.SubMaster(["carState", "deviceState"], poll="carState")
+  sm = state_submaster(messaging)
   state = None
   for _ in range(10):
     sm.update(1000)
@@ -99,6 +99,11 @@ def observe(duration_s=DURATION_S):
   report["duration_observed_s"] = round(time.monotonic() - start, 3)
   report["can_summary"] = finish_summary(summary)
   return report
+
+
+def state_submaster(messaging):
+  # deviceState runs at 2 Hz; ten carState polls can finish before its first message.
+  return messaging.SubMaster(["carState", "deviceState"], poll="deviceState")
 
 
 def main():

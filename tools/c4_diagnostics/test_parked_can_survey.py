@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from tools.c4_diagnostics.auto_upload import pending_captures
-from tools.c4_diagnostics.parked_can_survey import add_frame, finish_summary, parked_state
+from tools.c4_diagnostics.parked_can_survey import add_frame, finish_summary, parked_state, state_submaster
 
 
 class TestParkedCanSurvey(unittest.TestCase):
@@ -42,3 +42,8 @@ class TestParkedCanSurvey(unittest.TestCase):
       path = Path(directory) / "k7-security-probe-passive-can-test.json"
       path.write_text("{}", encoding="utf-8")
       self.assertEqual(pending_captures(Path(directory), {"uploaded": {}}), [path])
+
+  def test_preflight_waits_for_slower_device_state(self):
+    messaging = MagicMock()
+    state_submaster(messaging)
+    messaging.SubMaster.assert_called_once_with(["carState", "deviceState"], poll="deviceState")
