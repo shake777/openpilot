@@ -34,7 +34,7 @@ The client generates a UUID when `--upload-id` is omitted. Reuse an explicitly s
 
 ## Automatic K7 radar capture
 
-On a device, a valid private configuration enables capture whenever this branch's on-road service runs. The service captures classical CAN addresses `0x500` through `0x53f`, the SCC addresses `0x389`, `0x420`, `0x421`, and `0x50a`, and radar diagnostic addresses `0x7d0`/`0x7d8`. It also passively subscribes to `sendcan` for outgoing requests to `0x7d0`. It does not send CAN messages or change driving control.
+On a device, a valid private configuration enables capture whenever this branch's on-road service runs. The service captures the classic object triplets `0x238` through `0x255`, classical CAN addresses `0x500` through `0x53f`, the SCC addresses `0x389`, `0x420`, `0x421`, and `0x50a`, and radar diagnostic addresses `0x7d0`/`0x7d8`. It also passively subscribes to `sendcan` for outgoing requests to `0x7d0`. It does not send CAN messages or change driving control.
 
 Up to 256 diagnostic frames observed before on-road capture starts are buffered in memory and included with the next capture. Earlier frames can be discarded when this buffer is full; messages sent before the service subscribes cannot be recovered. Raw ISO-TP bytes, bus and timestamps retain the existing `C4RADAR1` format. Use `decode.py` to inspect them; the scene track count is not a diagnostic success indicator. This uploader remains specific to `carrot-wip-custom`.
 

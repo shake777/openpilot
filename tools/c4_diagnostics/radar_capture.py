@@ -14,11 +14,14 @@ MAX_CAPTURE_BYTES = 2 * 1024 * 1024
 MAX_DATA_BYTES = 64
 SCC_ADDRESSES = frozenset((0x389, 0x420, 0x421, 0x50A))
 DIAGNOSTIC_ADDRESSES = frozenset((0x7D0, 0x7D8))
+CLASSIC_TRACK_START = 0x238
+CLASSIC_TRACK_END = 0x255
 MAX_PENDING_DIAGNOSTICS = 256
 
 
 def is_radar_address(address: int) -> bool:
-  return 0x500 <= address <= 0x53F or address in SCC_ADDRESSES or address in DIAGNOSTIC_ADDRESSES
+  return (CLASSIC_TRACK_START <= address <= CLASSIC_TRACK_END or
+          0x500 <= address <= 0x53F or address in SCC_ADDRESSES or address in DIAGNOSTIC_ADDRESSES)
 
 
 def capture_can_frame(writer, pending_diagnostics: deque, mono_time: int, address: int, source: int, data: bytes) -> None:

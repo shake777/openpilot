@@ -55,13 +55,15 @@ class TestRadarCapture(unittest.TestCase):
     with tempfile.TemporaryDirectory() as temp_dir:
       writer = RadarCaptureWriter(Path(temp_dir), wall_time=1000)
       self.assertTrue(writer.append(123, 0x500, 1, b"\x01\x02\x03\x04\x05\x06\x07\x08"))
-      self.assertTrue(writer.append(124, 0x420, 0, b"scc-data"))
-      self.assertFalse(writer.append(125, 0x123, 0, b"ignored"))
+      self.assertTrue(writer.append(124, 0x238, 1, b"classic!"))
+      self.assertTrue(writer.append(125, 0x420, 0, b"scc-data"))
+      self.assertFalse(writer.append(126, 0x123, 0, b"ignored"))
       capture = writer.finalize()
       self.assertIsNotNone(capture)
       self.assertEqual(list(iter_records(capture)), [
         (123, 0x500, 1, b"\x01\x02\x03\x04\x05\x06\x07\x08"),
-        (124, 0x420, 0, b"scc-data"),
+        (124, 0x238, 1, b"classic!"),
+        (125, 0x420, 0, b"scc-data"),
       ])
 
   def test_empty_capture_is_removed(self):
