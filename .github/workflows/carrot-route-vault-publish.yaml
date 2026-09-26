@@ -28,7 +28,7 @@ concurrency:
 
 jobs:
   publish:
-    if: github.ref == 'refs/heads/carrot-wip'
+    if: github.ref == 'refs/heads/carrot-wip-custom'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -84,7 +84,7 @@ jobs:
           docker push "$IMAGE:sha-$GITHUB_SHA"
           # Never move the deployment tag backwards when a queued build is stale.
           # An unrelated vehicle/UI commit must not suppress the last replay update.
-          git fetch --depth=1 origin carrot-wip
+          git fetch --depth=1 origin carrot-wip-custom
           if git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- \
             tools/carrot_route_vault openpilot/selfdrive/carrot/radar_motion \
             openpilot/selfdrive/carrot/cluster openpilot/selfdrive/carrot/radar/tools/radar_validation_replay.py \
