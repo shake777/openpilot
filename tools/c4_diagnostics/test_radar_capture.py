@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from tools.c4_diagnostics.auto_upload import deterministic_upload_id, load_or_start_state, pending_captures, upload_one
 from tools.c4_diagnostics.can_inventory import MAX_INVENTORY_BYTES, CanInventoryWriter
+from tools.c4_diagnostics.qcamera_capture import MAX_QCAMERA_BYTES, QCameraCaptureWriter
 from tools.c4_diagnostics.radar_capture import MAX_CAPTURE_BYTES, MAX_PENDING_DIAGNOSTICS, RadarCaptureWriter, capture_can_frame, iter_records
 from tools.c4_diagnostics.scene_capture import MAX_SCENE_BYTES, SceneCaptureWriter, build_scene_frame
 from tools.c4_diagnostics.upload import MAX_TOTAL_BYTES, UploadConfig
@@ -143,14 +144,32 @@ class TestRadarCapture(unittest.TestCase):
       capture = root / "capture.c4radar"
       scene = root / "capture.c4scene"
       inventory = root / "capture.c4can.json"
+      video = root / "capture.qcamera.h264"
+      video_metadata = root / "capture.qcamera.json"
       capture.write_bytes(b"radar")
       scene.write_text('{"schema":"c4-scene-v1"}\n', encoding="utf-8")
       inventory.write_text('{"schema":"c4-can-inventory-v1"}\n', encoding="utf-8")
+      video.write_bytes(b"h264")
+      video_metadata.write_text('{"schema":"c4-qcamera-video-v1"}\n', encoding="utf-8")
       state_path = root / "state.json"
       state = {"schema": 2, "started_at": 1, "uploaded": {}}
       with patch("tools.c4_diagnostics.auto_upload.upload", return_value={"upload_id": "id"}) as send:
         upload_one(UploadConfig("https://example.com", "key"), "c4-001", state, state_path, capture)
-      self.assertEqual(send.call_args.args[3], [capture, scene, inventory])
+      self.assertEqual(send.call_args.args[3], [capture, scene, inventory, video, video_metadata])
+
+  def test_qcamera_capture_starts_on_header_and_stops_after_fifteen_seconds(self):
+    with tempfile.TemporaryDirectory() as temp_dir:
+      writer = QCameraCaptureWriter(Path(temp_dir), "capture")
+      packet = lambda header, data: SimpleNamespace(header=header, data=data, width=512, height=256)
+      self.assertFalse(writer.append(1_000_000_000, packet(b"", b"p")))
+      self.assertTrue(writer.append(2_000_000_000, packet(b"header", b"key")))
+      self.assertTrue(writer.append(17_000_000_000, packet(b"", b"delta")))
+      self.assertTrue(writer.complete())
+      video, metadata = writer.finalize()
+      saved = __import__("json").loads(metadata.read_text(encoding="utf-8"))
+      self.assertEqual(video.read_bytes(), b"headerkeydelta")
+      self.assertEqual(saved["duration_s"], 15.0)
+      self.assertEqual(saved["frames"], 2)
 
   def test_can_inventory_keeps_incoming_counts_and_change_mask(self):
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -183,7 +202,7 @@ class TestRadarCapture(unittest.TestCase):
       self.assertEqual(send.call_args.args[3], [capture])
 
   def test_capture_group_stays_below_upload_limit(self):
-    self.assertLess(MAX_CAPTURE_BYTES + MAX_SCENE_BYTES + MAX_INVENTORY_BYTES, MAX_TOTAL_BYTES)
+    self.assertLess(MAX_CAPTURE_BYTES + MAX_SCENE_BYTES + MAX_INVENTORY_BYTES + MAX_QCAMERA_BYTES, MAX_TOTAL_BYTES)
 
 
 if __name__ == "__main__":

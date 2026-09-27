@@ -68,11 +68,15 @@ def upload_one(config: UploadConfig, source_id: str, state: dict, state_path: Pa
   scene = capture.with_suffix(".c4scene")
   companion = capture.with_suffix(".meminfo")
   inventory = capture.with_suffix(".c4can.json")
+  video = capture.with_suffix(".qcamera.h264")
+  video_metadata = capture.with_suffix(".qcamera.json")
   files = [capture]
   if capture.suffix == ".c4radar":
     files += ([scene] if scene.is_file() and scene.stat().st_size else []) \
              + ([companion] if companion.is_file() and companion.stat().st_size else []) \
-             + ([inventory] if inventory.is_file() and inventory.stat().st_size else [])
+             + ([inventory] if inventory.is_file() and inventory.stat().st_size else []) \
+             + ([video] if video.is_file() and video.stat().st_size else []) \
+             + ([video_metadata] if video_metadata.is_file() and video_metadata.stat().st_size else [])
   collected_at = datetime.fromtimestamp(capture.stat().st_mtime, timezone.utc).isoformat()
   result = upload(config, source_id, upload_id, files, {
     "site": config.site,

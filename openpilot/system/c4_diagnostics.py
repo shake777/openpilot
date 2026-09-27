@@ -13,6 +13,7 @@ from openpilot.common.swaglog import cloudlog
 from tools.c4_diagnostics.auto_upload import load_or_start_state, pending_captures, upload_one
 from tools.c4_diagnostics.can_inventory import CanInventoryWriter
 from tools.c4_diagnostics.parked_probe import summarize_last_once
+from tools.c4_diagnostics.qcamera_capture import QCameraCaptureWriter
 from tools.c4_diagnostics.radar_capture import MAX_PENDING_DIAGNOSTICS, RadarCaptureWriter, capture_can_frame
 from tools.c4_diagnostics.scene_capture import SceneCaptureWriter, build_scene_frame
 from tools.c4_diagnostics.upload import UploadError, load_config
@@ -22,6 +23,8 @@ NetworkType = log.DeviceState.NetworkType
 CONFIG_RETRY_SECONDS = 60
 UPLOAD_RETRY_SECONDS = 15
 SCENE_INTERVAL_SECONDS = 0.1
+CAPTURE_INTERVAL_SECONDS = 30 * 60
+CAPTURE_FALLBACK_SECONDS = 20
 SCENE_SERVICES = ("carState", "modelV2", "liveTracks", "radarState", "carControl")
 
 
@@ -48,15 +51,20 @@ def write_meminfo(capture: Path) -> None:
 
 
 def finalize_capture(writer: RadarCaptureWriter, scene_writer: SceneCaptureWriter,
-                     inventory_writer: CanInventoryWriter) -> None:
+                     inventory_writer: CanInventoryWriter, video_writer: QCameraCaptureWriter) -> None:
   scene = scene_writer.finalize()
   inventory = inventory_writer.finalize()
+  video, video_metadata = video_writer.finalize()
   capture = writer.finalize()
   if capture is None:
     if scene is not None:
       scene.unlink(missing_ok=True)
     if inventory is not None:
       inventory.unlink(missing_ok=True)
+    if video is not None:
+      video.unlink(missing_ok=True)
+    if video_metadata is not None:
+      video_metadata.unlink(missing_ok=True)
     return
   write_meminfo(capture)
 
@@ -123,11 +131,14 @@ def main() -> None:
 
   can_sock = messaging.sub_sock("can", conflate=False, timeout=1000)
   sendcan_sock = messaging.sub_sock("sendcan", conflate=False)
+  qroad_sock = messaging.sub_sock("qRoadEncodeData", conflate=False)
   pending_diagnostics = deque(maxlen=MAX_PENDING_DIAGNOSTICS)
   sm = messaging.SubMaster(["deviceState", "carState", "modelV2", "liveTracks", "radarState", "carControl"])
   writer = None
   scene_writer = None
   inventory_writer = None
+  video_writer = None
+  next_capture_time = None
   next_scene_time = time.monotonic()
   try:
     while not stop_event.is_set():
@@ -138,16 +149,22 @@ def main() -> None:
         network_online.clear()
 
       onroad = sm.valid["deviceState"] and sm["deviceState"].started
-      if onroad and writer is None:
+      monotonic_now = time.monotonic()
+      if not onroad:
+        next_capture_time = None
+      if onroad and writer is None and (next_capture_time is None or monotonic_now >= next_capture_time):
         writer = RadarCaptureWriter(spool_dir)
         scene_writer = SceneCaptureWriter(spool_dir, writer.capture_name, writer.started_at)
         inventory_writer = CanInventoryWriter(spool_dir, writer.capture_name)
-        next_scene_time = time.monotonic()
-      elif not onroad and writer is not None and scene_writer is not None and inventory_writer is not None:
-        finalize_capture(writer, scene_writer, inventory_writer)
+        video_writer = QCameraCaptureWriter(spool_dir, writer.capture_name)
+        next_scene_time = monotonic_now
+        next_capture_time = monotonic_now + CAPTURE_INTERVAL_SECONDS
+      elif not onroad and writer is not None and scene_writer is not None and inventory_writer is not None and video_writer is not None:
+        finalize_capture(writer, scene_writer, inventory_writer, video_writer)
         writer = None
         scene_writer = None
         inventory_writer = None
+        video_writer = None
 
       message = messaging.recv_one_or_none(can_sock)
       if message is not None:
@@ -160,22 +177,27 @@ def main() -> None:
           if frame.address == 0x7D0:
             capture_can_frame(writer, pending_diagnostics, sent.logMonoTime, frame.address, frame.src, bytes(frame.dat))
 
+      for encoded in messaging.drain_sock(qroad_sock, wait_for_one=False):
+        if video_writer is not None:
+          video_writer.append(encoded.logMonoTime, encoded.qRoadEncodeData)
+
       now = time.time()
-      monotonic_now = time.monotonic()
       if scene_writer is not None and monotonic_now >= next_scene_time and scene_ready(sm):
         scene_writer.append(build_scene_frame(
           time.monotonic_ns(), sm["carState"], sm["modelV2"], sm["liveTracks"], sm["radarState"], sm["carControl"],
         ))
         next_scene_time = monotonic_now + SCENE_INTERVAL_SECONDS
 
-      if writer is not None and scene_writer is not None and inventory_writer is not None and (writer.should_rotate(now) or scene_writer.should_rotate(now)):
-        finalize_capture(writer, scene_writer, inventory_writer)
-        writer = RadarCaptureWriter(spool_dir, now)
-        scene_writer = SceneCaptureWriter(spool_dir, writer.capture_name, writer.started_at)
-        inventory_writer = CanInventoryWriter(spool_dir, writer.capture_name)
+      if (writer is not None and scene_writer is not None and inventory_writer is not None and video_writer is not None and
+          (video_writer.complete() or writer.should_rotate(now, CAPTURE_FALLBACK_SECONDS) or scene_writer.should_rotate(now, CAPTURE_FALLBACK_SECONDS))):
+        finalize_capture(writer, scene_writer, inventory_writer, video_writer)
+        writer = None
+        scene_writer = None
+        inventory_writer = None
+        video_writer = None
   finally:
-    if writer is not None and scene_writer is not None and inventory_writer is not None:
-      finalize_capture(writer, scene_writer, inventory_writer)
+    if writer is not None and scene_writer is not None and inventory_writer is not None and video_writer is not None:
+      finalize_capture(writer, scene_writer, inventory_writer, video_writer)
     stop_event.set()
     uploader.join(timeout=5)
 
