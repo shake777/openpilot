@@ -116,9 +116,10 @@ def main():
       max_input_age_ms = max(max_input_age_ms, (now_ns - ego.receive_ns) / 1e6)
       result = radar.update_carrot(ego.v_ego, ego.a_ego, ego.receive_ns * 1e-9, packets)
       for packet_ns, packet in packets:
-        if (classic_tracker is not None and packet.src == 1
-            and CLASSIC_238_START_ADDR <= packet.address <= CLASSIC_238_END_ADDR):
-          classic_tracker.update(packet_ns, packet.address, packet.dat, ego.v_ego)
+        address, dat, src = packet
+        if (classic_tracker is not None and src == 1
+            and CLASSIC_238_START_ADDR <= address <= CLASSIC_238_END_ADDR):
+          classic_tracker.update(packet_ns, address, dat, ego.v_ego)
       processed += 1
       if now() - ego.receive_ns > MAX_INPUT_AGE_NS:
         publish_error('processingTimeout', now())
