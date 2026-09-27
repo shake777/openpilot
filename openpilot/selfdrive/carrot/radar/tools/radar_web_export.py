@@ -13,7 +13,7 @@ import sys
 from openpilot.selfdrive.carrot.radar.tools import radar_validation_replay as replay
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 CLASSIC_238_MAX_AGE_S = 0.15
 
 
@@ -39,6 +39,8 @@ def _classic_238_object_dict(slot, triplet):
     "y_rel": obj.y_rel,
     "v_lead": obj.v_lead,
     "object_sequence": triplet.object_sequence,
+    "second_raw_hex": triplet.second_frame.hex(),
+    "third_raw_hex": triplet.third_frame.hex(),
     "rolling_counter": triplet.rolling_counters[0],
     "counter_consistent": triplet.counter_consistent,
     "confirmed_candidate": triplet.counter_consistent and obj.status == 2,
@@ -55,6 +57,7 @@ def _track_classic_238_snapshots(snapshots):
     Classic238TrackObservation,
   )
   tracker = Classic238AssociationTracker()
+  previous_unknown = {}
   tracked_snapshots = []
   for time_s, objects in snapshots:
     mono_time_ns = round(time_s * 1e9)
@@ -67,7 +70,20 @@ def _track_classic_238_snapshots(snapshots):
     ) for item in objects]
     tracks = tracker.update_scan(mono_time_ns, observations)
     ids_by_slot = {track.slot: track.track_id for track in tracks if track.last_seen_ns == mono_time_ns}
-    tracked_snapshots.append((time_s, [dict(item, track_id=ids_by_slot[item["slot"]]) for item in objects]))
+    tracked_objects = []
+    for item in objects:
+      track_id = ids_by_slot[item["slot"]]
+      tracked = dict(item, track_id=track_id)
+      second = int(str(item.get("second_raw_hex") or "0"), 16) & 0x3fffffffffffffff
+      third = int(str(item.get("third_raw_hex") or "0"), 16) & 0x3fffff00ffffffff
+      previous = previous_unknown.get(track_id)
+      tracked["second_unknown_change_mask"] = None if previous is None else f"{second ^ previous[0]:016x}"
+      tracked["third_unknown_change_mask"] = None if previous is None else f"{third ^ previous[1]:016x}"
+      tracked["second_unknown_changed_bits"] = None if previous is None else (second ^ previous[0]).bit_count()
+      tracked["third_unknown_changed_bits"] = None if previous is None else (third ^ previous[1]).bit_count()
+      previous_unknown[track_id] = (second, third)
+      tracked_objects.append(tracked)
+    tracked_snapshots.append((time_s, tracked_objects))
   return tracked_snapshots
 
 

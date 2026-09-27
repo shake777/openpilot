@@ -114,10 +114,14 @@ def test_export_adds_classic_238_objects_without_changing_selection():
   snapshot = (frames[1].mono_time_s, [{
     'slot': 3, 'status': 2, 'd_rel': 30.0, 'y_rel': -1.0, 'v_lead': 20.0,
     'object_sequence': 7, 'rolling_counter': 1, 'counter_consistent': True,
-    'confirmed_candidate': True,
+    'confirmed_candidate': True, 'second_raw_hex': '4000000000000000',
+    'third_raw_hex': '4000000700000000',
   }])
-  payload = exporter.export_frames(frames, classic_238_bus=1, classic_238_snapshots=[snapshot])
-  assert payload['schemaVersion'] == 3
+  changed = (frames[2].mono_time_s, [{
+    **snapshot[1][0], 'second_raw_hex': '8000000000000001', 'third_raw_hex': '8000000800000002',
+  }])
+  payload = exporter.export_frames(frames, classic_238_bus=1, classic_238_snapshots=[snapshot, changed])
+  assert payload['schemaVersion'] == 4
   assert payload['classic238'] == {
     'available': True, 'bus': 1, 'controlConnected': False, 'confirmedStatus': 2,
   }
@@ -125,6 +129,10 @@ def test_export_adds_classic_238_objects_without_changing_selection():
   assert payload['frames'][1]['classic_238_objects'][0]['slot'] == 3
   assert payload['frames'][1]['classic_238_objects'][0]['track_id'] == 0
   assert payload['frames'][2]['classic_238_objects'][0]['confirmed_candidate'] is True
+  assert payload['frames'][2]['classic_238_objects'][0]['second_unknown_change_mask'] == '0000000000000001'
+  assert payload['frames'][2]['classic_238_objects'][0]['third_unknown_change_mask'] == '0000000000000002'
+  assert payload['frames'][2]['classic_238_objects'][0]['second_unknown_changed_bits'] == 1
+  assert payload['frames'][2]['classic_238_objects'][0]['third_unknown_changed_bits'] == 1
   assert payload['frames'][1]['selection']['lead_one']['track_id'] == 41
 
 

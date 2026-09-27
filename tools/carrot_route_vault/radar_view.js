@@ -176,7 +176,7 @@ export function attachRadarReview(video) {
         if(response.status===202||response.status===503){if(Date.now()>deadline)throw new Error('분석 준비가 지연되고 있습니다. 잠시 후 다시 불러와 주세요.');await new Promise((resolve,reject)=>{const abort=()=>{clearTimeout(timer);reject(new DOMException('Aborted','AbortError'));};const timer=setTimeout(()=>{signal.removeEventListener('abort',abort);resolve();},2000);signal.addEventListener('abort',abort,{once:true});});continue;}
         if(!response.ok)throw new Error(response.status===404?'이 세그먼트에는 분석할 로그가 없습니다.':response.status===422?'레이더 분석에 실패했습니다. 로그 또는 서버 분석 환경을 확인해 주세요.':`레이더 데이터를 불러오지 못했습니다 (${response.status}).`);
         const data=await response.json();if(token!==generation)return;
-        if(data.schemaVersion!==3||!Array.isArray(data.frames)||!data.frames.length)throw new Error('레이더 검증 데이터가 비어 있습니다.');
+        if(data.schemaVersion!==4||!Array.isArray(data.frames)||!data.frames.length)throw new Error('레이더 검증 데이터가 비어 있습니다.');
         data.videoAligned=data.videoAligned&&Boolean(selected.videoUrl);
         payload=data;frames=data.frames;times=frames.map(f=>data.videoAligned?f.video_time_s:f.time_s);
         graphTimes=new Map(frames.map((f,i)=>[f.time_s,times[i]]));graphCacheKey='';
