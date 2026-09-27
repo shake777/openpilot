@@ -1,14 +1,21 @@
-# C4 진단 묶음에 주기별 15초 qRoad H.264 영상을 저장하는 모듈
+# C4 진단 묶음에 10분 주기 30초 qRoad H.264 영상을 저장하는 모듈
 import json
 import os
 from pathlib import Path
 
 
-VIDEO_DURATION_SECONDS = 15.0
-MAX_QCAMERA_BYTES = 640 * 1024
-REPRESENTATIVE_CAPTURE_INTERVALS_SECONDS = (5 * 60, 30 * 60)
-# 30분 시점은 5분 주기에도 포함되므로 하나의 최단 주기 타이머로 중복을 막는다.
-REPRESENTATIVE_CAPTURE_INTERVAL_SECONDS = min(REPRESENTATIVE_CAPTURE_INTERVALS_SECONDS)
+VIDEO_DURATION_SECONDS = 30.0
+# 256 kbps qRoad의 30초와 코덱 헤더 여유를 담되 전체 업로드는 5 MiB 아래로 유지한다.
+MAX_QCAMERA_BYTES = 1152 * 1024
+REPRESENTATIVE_CAPTURE_INTERVAL_SECONDS = 10 * 60
+
+
+def representative_video_due(now: float, next_video_time: float | None) -> bool:
+  return next_video_time is None or now >= next_video_time
+
+
+def next_representative_video_time(now: float) -> float:
+  return now + REPRESENTATIVE_CAPTURE_INTERVAL_SECONDS
 
 
 class QCameraCaptureWriter:

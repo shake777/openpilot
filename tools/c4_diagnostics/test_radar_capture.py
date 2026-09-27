@@ -12,7 +12,9 @@ from tools.c4_diagnostics.qcamera_capture import (
   MAX_QCAMERA_BYTES,
   QCameraCaptureWriter,
   REPRESENTATIVE_CAPTURE_INTERVAL_SECONDS,
-  REPRESENTATIVE_CAPTURE_INTERVALS_SECONDS,
+  VIDEO_DURATION_SECONDS,
+  next_representative_video_time,
+  representative_video_due,
 )
 from tools.c4_diagnostics.radar_capture import MAX_CAPTURE_BYTES, MAX_PENDING_DIAGNOSTICS, RadarCaptureWriter, capture_can_frame, iter_records
 from tools.c4_diagnostics.scene_capture import MAX_SCENE_BYTES, SceneCaptureWriter, build_scene_frame
@@ -162,24 +164,27 @@ class TestRadarCapture(unittest.TestCase):
         upload_one(UploadConfig("https://example.com", "key"), "c4-001", state, state_path, capture)
       self.assertEqual(send.call_args.args[3], [capture, scene, inventory, video, video_metadata])
 
-  def test_qcamera_capture_starts_on_header_and_stops_after_fifteen_seconds(self):
+  def test_qcamera_capture_starts_on_header_and_stops_after_thirty_seconds(self):
     with tempfile.TemporaryDirectory() as temp_dir:
       writer = QCameraCaptureWriter(Path(temp_dir), "capture")
       packet = lambda header, data: SimpleNamespace(header=header, data=data, width=512, height=256)
       self.assertFalse(writer.append(1_000_000_000, packet(b"", b"p")))
       self.assertTrue(writer.append(2_000_000_000, packet(b"header", b"key")))
-      self.assertTrue(writer.append(17_000_000_000, packet(b"", b"delta")))
+      self.assertTrue(writer.append(32_000_000_000, packet(b"", b"delta")))
       self.assertTrue(writer.complete())
       video, metadata = writer.finalize()
       saved = __import__("json").loads(metadata.read_text(encoding="utf-8"))
       self.assertEqual(video.read_bytes(), b"headerkeydelta")
-      self.assertEqual(saved["duration_s"], 15.0)
+      self.assertEqual(saved["duration_s"], 30.0)
       self.assertEqual(saved["frames"], 2)
 
-  def test_representative_capture_uses_five_minutes_without_thirty_minute_duplicate(self):
-    self.assertEqual(REPRESENTATIVE_CAPTURE_INTERVALS_SECONDS, (300, 1800))
-    self.assertEqual(REPRESENTATIVE_CAPTURE_INTERVAL_SECONDS, 300)
-    self.assertEqual(1800 % REPRESENTATIVE_CAPTURE_INTERVAL_SECONDS, 0)
+  def test_representative_video_uses_ten_minutes_and_thirty_seconds(self):
+    self.assertEqual(REPRESENTATIVE_CAPTURE_INTERVAL_SECONDS, 600)
+    self.assertEqual(VIDEO_DURATION_SECONDS, 30.0)
+    self.assertTrue(representative_video_due(100.0, None))
+    next_time = next_representative_video_time(100.0)
+    self.assertFalse(representative_video_due(699.999, next_time))
+    self.assertTrue(representative_video_due(700.0, next_time))
 
   def test_can_inventory_keeps_incoming_counts_and_change_mask(self):
     with tempfile.TemporaryDirectory() as temp_dir:

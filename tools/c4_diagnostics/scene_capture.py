@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 SCHEMA = "c4-scene-v1"
-MAX_SCENE_BYTES = 2 * 1024 * 1024
+MAX_SCENE_BYTES = 1536 * 1024
 
 
 def _number(value):
