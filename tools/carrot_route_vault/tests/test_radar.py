@@ -119,7 +119,8 @@ def test_export_adds_classic_238_objects_without_changing_selection():
     'third_raw_hex': '4000000700000000',
   }])
   changed = (frames[2].mono_time_s, [{
-    **snapshot[1][0], 'second_raw_hex': '8000000000000001', 'third_raw_hex': '8000000800000002',
+    **snapshot[1][0], 'object_sequence': 8,
+    'second_raw_hex': '8000000000000001', 'third_raw_hex': '8000000800000002',
   }])
   payload = exporter.export_frames(frames, classic_238_bus=1, classic_238_snapshots=[snapshot, changed])
   assert payload['schemaVersion'] == 4
