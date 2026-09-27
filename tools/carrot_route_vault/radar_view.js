@@ -64,6 +64,8 @@ export function attachRadarReview(video) {
   let graphTimes = new Map(), graphCacheKey = '';
   const graphBackground = document.createElement('canvas');
   const num = (v, digits=1) => Number.isFinite(v) ? v.toFixed(digits) : '—';
+  const hexBytes = value => typeof value === 'string' ? (value.match(/../g)||[]).join(' ') : '—';
+  const classicAddress = (slot, role) => `0x${(0x238+Number(slot)*3+role).toString(16).toUpperCase()}`;
   const valid = v => typeof v === 'number' && Number.isFinite(v);
   const videoAvailable = () => Boolean(video.getAttribute('src')) && Number.isFinite(video.duration) && video.duration > 0;
   const usesVideo = () => videoAvailable() && (!payload || payload.videoAligned);
@@ -139,10 +141,11 @@ export function attachRadarReview(video) {
     if(!frame){find('.radar-readout').textContent='';find('.radar-detail').textContent='';return;}
     const lead=p=>p?`#${p.track_id} · ${num(p.d_rel)} m · ${num(p.v_lead*3.6)} km/h`:'없음';
     const classic=frame.classic_238_objects||[],confirmed=classic.filter(p=>p.confirmed_candidate).length;
-    find('.radar-readout').textContent=`차속 ${num(frame.v_ego*3.6)} km/h · 조향 ${num(frame.steering_angle_deg)}°\n재계산 L1 ${lead(frame.selection?.lead_one)}\n재계산 L2 ${lead(frame.selection?.lead_two)}\n기록된 L1 ${lead(frame.recorded_one?.status?frame.recorded_one:null)}\n0x238 ${classic.length}개 · 상태 2 확인 후보 ${confirmed}개 · CAN bus ${payload.classic238?.bus??'—'}\nSCC ${num(frame.scc_distance_m)} m · SCC 가속 ${num(frame.scc_a_req_raw,2)} · Carrot 목표 ${num(frame.carrot_a_target,2)} m/s²`;
+    const changed=classic.filter(p=>(p.second_unknown_changed_bits||0)+(p.third_unknown_changed_bits||0)>0).length;
+    find('.radar-readout').textContent=`차속 ${num(frame.v_ego*3.6)} km/h · 조향 ${num(frame.steering_angle_deg)}°\n재계산 L1 ${lead(frame.selection?.lead_one)}\n재계산 L2 ${lead(frame.selection?.lead_two)}\n기록된 L1 ${lead(frame.recorded_one?.status?frame.recorded_one:null)}\n0x238 ${classic.length}개 · 상태 2 확인 후보 ${confirmed}개 · 후속 미해석 변화 ${changed}개 · CAN bus ${payload.classic238?.bus??'—'}\nSCC ${num(frame.scc_distance_m)} m · SCC 가속 ${num(frame.scc_a_req_raw,2)} · Carrot 목표 ${num(frame.carrot_a_target,2)} m/s²`;
     const candidates=frame.selection?.cutin_diagnostics||[], chosen=candidates.find(p=>p.track_id===selectedTrack);
     const classicChosen=classic.find(p=>p.slot===selectedClassicSlot);
-    find('.radar-detail').textContent=classicChosen?`0x238 슬롯 ${classicChosen.slot} · 상태 ${classicChosen.status} ${classicChosen.confirmed_candidate?'· 실측 일치 확인 후보':'· 의미 미확정'}\n거리 ${num(classicChosen.d_rel)} m · 좌우 ${num(classicChosen.y_rel)} m · 절대속도 ${num(classicChosen.v_lead*3.6)} km/h\n순번 ${classicChosen.object_sequence} · rolling counter ${classicChosen.rolling_counter} · ${classicChosen.counter_consistent?'triplet 일치':'triplet 불일치'}`:chosen?`#${chosen.track_id} ${chosen.stage} · ${chosen.reason}\n${chosen.detail}`:candidates.filter(p=>['CUT-IN','RAW-CUTIN','PREDECEL'].includes(p.stage)).map(p=>`#${p.track_id} ${p.stage}: ${p.reason}`).join('\n');
+    find('.radar-detail').textContent=classicChosen?`T${classicChosen.track_id} · 슬롯 ${classicChosen.slot} · 상태 ${classicChosen.status} ${classicChosen.confirmed_candidate?'· 실측 일치 확인 후보':'· 의미 미확정'}\n거리 ${num(classicChosen.d_rel)} m · 좌우 ${num(classicChosen.y_rel)} m · 절대속도 ${num(classicChosen.v_lead*3.6)} km/h\n순번 ${classicChosen.object_sequence} (Δ ${classicChosen.object_sequence_delta??'—'}) · rolling counter ${classicChosen.rolling_counter} · ${classicChosen.counter_consistent?'triplet 일치':'triplet 불일치'}\n${classicAddress(classicChosen.slot,0)} 운동학  ${hexBytes(classicChosen.first_raw_hex)}\n${classicAddress(classicChosen.slot,1)} 미해석  ${hexBytes(classicChosen.second_raw_hex)}\n  Δ mask ${hexBytes(classicChosen.second_unknown_change_mask)} · ${classicChosen.second_unknown_changed_bits??'—'} bit\n${classicAddress(classicChosen.slot,2)} 미해석  ${hexBytes(classicChosen.third_raw_hex)}\n  Δ mask ${hexBytes(classicChosen.third_unknown_change_mask)} · ${classicChosen.third_unknown_changed_bits??'—'} bit\n※ Δ는 rolling counter와 확인된 순번 byte를 제외한 동일 추적 객체의 직전 표본 대비 변화입니다.`:chosen?`#${chosen.track_id} ${chosen.stage} · ${chosen.reason}\n${chosen.detail}`:candidates.filter(p=>['CUT-IN','RAW-CUTIN','PREDECEL'].includes(p.stage)).map(p=>`#${p.track_id} ${p.stage}: ${p.reason}`).join('\n');
   }
   function seek(t){if(!duration())return;current=Math.max(0,Math.min(t,duration()));index=nearest(current);if(usesVideo())video.currentTime=Math.min(current,video.duration);draw();}
   function tick(now){

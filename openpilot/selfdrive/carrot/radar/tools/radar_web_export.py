@@ -39,6 +39,7 @@ def _classic_238_object_dict(slot, triplet):
     "y_rel": obj.y_rel,
     "v_lead": obj.v_lead,
     "object_sequence": triplet.object_sequence,
+    "first_raw_hex": f"{obj.raw:016x}",
     "second_raw_hex": triplet.second_frame.hex(),
     "third_raw_hex": triplet.third_frame.hex(),
     "rolling_counter": triplet.rolling_counters[0],
@@ -81,7 +82,8 @@ def _track_classic_238_snapshots(snapshots):
       tracked["third_unknown_change_mask"] = None if previous is None else f"{third ^ previous[1]:016x}"
       tracked["second_unknown_changed_bits"] = None if previous is None else (second ^ previous[0]).bit_count()
       tracked["third_unknown_changed_bits"] = None if previous is None else (third ^ previous[1]).bit_count()
-      previous_unknown[track_id] = (second, third)
+      tracked["object_sequence_delta"] = None if previous is None else (item["object_sequence"] - previous[2]) & 0xff
+      previous_unknown[track_id] = (second, third, item["object_sequence"])
       tracked_objects.append(tracked)
     tracked_snapshots.append((time_s, tracked_objects))
   return tracked_snapshots

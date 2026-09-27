@@ -114,7 +114,8 @@ def test_export_adds_classic_238_objects_without_changing_selection():
   snapshot = (frames[1].mono_time_s, [{
     'slot': 3, 'status': 2, 'd_rel': 30.0, 'y_rel': -1.0, 'v_lead': 20.0,
     'object_sequence': 7, 'rolling_counter': 1, 'counter_consistent': True,
-    'confirmed_candidate': True, 'second_raw_hex': '4000000000000000',
+    'confirmed_candidate': True, 'first_raw_hex': '0123456789abcdef',
+    'second_raw_hex': '4000000000000000',
     'third_raw_hex': '4000000700000000',
   }])
   changed = (frames[2].mono_time_s, [{
@@ -133,6 +134,8 @@ def test_export_adds_classic_238_objects_without_changing_selection():
   assert payload['frames'][2]['classic_238_objects'][0]['third_unknown_change_mask'] == '0000000000000002'
   assert payload['frames'][2]['classic_238_objects'][0]['second_unknown_changed_bits'] == 1
   assert payload['frames'][2]['classic_238_objects'][0]['third_unknown_changed_bits'] == 1
+  assert payload['frames'][2]['classic_238_objects'][0]['object_sequence_delta'] == 1
+  assert payload['frames'][2]['classic_238_objects'][0]['first_raw_hex'] == '0123456789abcdef'
   assert payload['frames'][1]['selection']['lead_one']['track_id'] == 41
 
 
