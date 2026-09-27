@@ -8,7 +8,12 @@ from unittest.mock import patch
 
 from tools.c4_diagnostics.auto_upload import deterministic_upload_id, load_or_start_state, pending_captures, upload_one
 from tools.c4_diagnostics.can_inventory import MAX_INVENTORY_BYTES, CanInventoryWriter
-from tools.c4_diagnostics.qcamera_capture import MAX_QCAMERA_BYTES, QCameraCaptureWriter
+from tools.c4_diagnostics.qcamera_capture import (
+  MAX_QCAMERA_BYTES,
+  QCameraCaptureWriter,
+  REPRESENTATIVE_CAPTURE_INTERVAL_SECONDS,
+  REPRESENTATIVE_CAPTURE_INTERVALS_SECONDS,
+)
 from tools.c4_diagnostics.radar_capture import MAX_CAPTURE_BYTES, MAX_PENDING_DIAGNOSTICS, RadarCaptureWriter, capture_can_frame, iter_records
 from tools.c4_diagnostics.scene_capture import MAX_SCENE_BYTES, SceneCaptureWriter, build_scene_frame
 from tools.c4_diagnostics.upload import MAX_TOTAL_BYTES, UploadConfig
@@ -170,6 +175,11 @@ class TestRadarCapture(unittest.TestCase):
       self.assertEqual(video.read_bytes(), b"headerkeydelta")
       self.assertEqual(saved["duration_s"], 15.0)
       self.assertEqual(saved["frames"], 2)
+
+  def test_representative_capture_uses_five_minutes_without_thirty_minute_duplicate(self):
+    self.assertEqual(REPRESENTATIVE_CAPTURE_INTERVALS_SECONDS, (300, 1800))
+    self.assertEqual(REPRESENTATIVE_CAPTURE_INTERVAL_SECONDS, 300)
+    self.assertEqual(1800 % REPRESENTATIVE_CAPTURE_INTERVAL_SECONDS, 0)
 
   def test_can_inventory_keeps_incoming_counts_and_change_mask(self):
     with tempfile.TemporaryDirectory() as temp_dir:

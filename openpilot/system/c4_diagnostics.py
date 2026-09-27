@@ -13,7 +13,7 @@ from openpilot.common.swaglog import cloudlog
 from tools.c4_diagnostics.auto_upload import load_or_start_state, pending_captures, upload_one
 from tools.c4_diagnostics.can_inventory import CanInventoryWriter
 from tools.c4_diagnostics.parked_probe import summarize_last_once
-from tools.c4_diagnostics.qcamera_capture import QCameraCaptureWriter
+from tools.c4_diagnostics.qcamera_capture import QCameraCaptureWriter, REPRESENTATIVE_CAPTURE_INTERVAL_SECONDS
 from tools.c4_diagnostics.radar_capture import MAX_PENDING_DIAGNOSTICS, RadarCaptureWriter, capture_can_frame
 from tools.c4_diagnostics.scene_capture import SceneCaptureWriter, build_scene_frame
 from tools.c4_diagnostics.upload import UploadError, load_config
@@ -23,7 +23,6 @@ NetworkType = log.DeviceState.NetworkType
 CONFIG_RETRY_SECONDS = 60
 UPLOAD_RETRY_SECONDS = 15
 SCENE_INTERVAL_SECONDS = 0.1
-CAPTURE_INTERVAL_SECONDS = 30 * 60
 CAPTURE_FALLBACK_SECONDS = 20
 SCENE_SERVICES = ("carState", "modelV2", "liveTracks", "radarState", "carControl")
 
@@ -158,7 +157,7 @@ def main() -> None:
         inventory_writer = CanInventoryWriter(spool_dir, writer.capture_name)
         video_writer = QCameraCaptureWriter(spool_dir, writer.capture_name)
         next_scene_time = monotonic_now
-        next_capture_time = monotonic_now + CAPTURE_INTERVAL_SECONDS
+        next_capture_time = monotonic_now + REPRESENTATIVE_CAPTURE_INTERVAL_SECONDS
       elif not onroad and writer is not None and scene_writer is not None and inventory_writer is not None and video_writer is not None:
         finalize_capture(writer, scene_writer, inventory_writer, video_writer)
         writer = None
