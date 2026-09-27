@@ -264,6 +264,24 @@ function normalizeRadar(overlayState) {
     });
   }
 
+  // 0x238 계열 후보는 제어용 liveTracks와 분리된 표시 전용 점으로 추가한다.
+  for (const track of unpackLiveTracks(overlayState?.classicRadarTracks)) {
+    const xM = finiteOrNull(track?.xM ?? track?.dRel);
+    const yM = finiteOrNull(track?.yM ?? track?.yRel);
+    if (xM === null || yM === null) continue;
+    const trackId = track?.id ?? track?.trackId ?? radar.length;
+    push({
+      id: `classic238:${trackId}`,
+      source: "front",
+      xM,
+      yM,
+      relativeSpeedMps: finiteOrNull(track?.relativeSpeedMps ?? track?.vRel),
+      measured: typeof track?.measured === "boolean" ? track.measured : true,
+      selected: false,
+      dedupeKey: `classic238:${trackId}`,
+    });
+  }
+
   // Only leads with no matching track need their own mark; a matched lead was
   // already drawn above and keeps its real radar source colour.
   for (const lead of leads) {
@@ -376,7 +394,9 @@ export function normalizeDriveInsightsSnapshot({
     path: hasSource(overlayState?.[selectedPath.service]),
     lanes: hasSource(overlayState?.modelV2),
     leads: hasSource(overlayState?.modelV2),
-    radar: hasSource(overlayState?.radarState) || hasSource(overlayState?.liveTracks),
+    radar: hasSource(overlayState?.radarState)
+      || hasSource(overlayState?.liveTracks)
+      || hasSource(overlayState?.classicRadarTracks),
     navigation: hasSource(hudState?.navigation)
       || hasSource(overlayState?.navigation)
       || hasSource(hudState?.navInstructionCarrot)
@@ -389,7 +409,7 @@ export function normalizeDriveInsightsSnapshot({
     path: domainAge(serviceAges, selectedPath.service),
     lanes: domainAge(serviceAges, "modelV2"),
     leads: domainAge(serviceAges, "modelV2"),
-    radar: domainAge(serviceAges, ...(overlayState?.liveTracks ? ["radarState", "liveTracks"] : ["radarState"])),
+    radar: domainAge(serviceAges, "radarState", "liveTracks", "classicRadarTracks"),
     navigation: domainAge(serviceAges, "carrotMan", "navInstructionCarrot"),
     camera: domainAge(serviceAges, "roadCameraState"),
   };

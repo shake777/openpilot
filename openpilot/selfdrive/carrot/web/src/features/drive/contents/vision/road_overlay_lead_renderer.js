@@ -305,6 +305,30 @@ export function createRoadOverlayLeadRenderer(options = {}) {
     }
   }
 
+  function drawClassicRadarTargets(classicRadarTracks, sourceModel, calibTransform, videoWidth, videoHeight) {
+    const projectionLine = model.getRadarProjectionLine(sourceModel);
+    if (!projectionLine) return;
+    const uiScale = ui.getScale(videoWidth, videoHeight);
+    const accent = "rgba(0,220,255,0.96)";
+    for (const radar of model.getClassicRadarTracks(classicRadarTracks)) {
+      const dRel = finiteNumber(radar?.dRel, 0);
+      if (dRel <= 2.5) continue;
+      const yRel = finiteNumber(radar?.yRel, 0);
+      const z = projection.samplePathZ(projectionLine, dRel) - 0.61;
+      const center = projection.projectPointPrecise(calibTransform, dRel, -yRel, z);
+      if (!center) continue;
+      geometry.drawPolygon(geometry.circlePolygon(center.x, center.y, Math.max(7 * uiScale, 4)), accent);
+      const label = `238-${finiteNumber(radar?.trackId, 0)} ${dRel.toFixed(0)}m ${finiteNumber(radar?.vRel, 0).toFixed(1)}m/s`;
+      ui.drawText(label, center.x, center.y - 12 * uiScale, {
+        fontSize: Math.max(18 * uiScale, 11),
+        fontWeight: 800,
+        fillStyle: accent,
+        strokeStyle: "rgba(0,0,0,0.92)",
+        strokeWidth: Math.max(3 * uiScale, 1.8),
+      });
+    }
+  }
+
   function draw(sourceModel, overlayState, hudState, calibTransform, videoWidth, videoHeight, stageWidth, stageHeight, transform) {
     const radarState = overlayState?.radarState || {};
     const modelPath = sourceModel?.position || null;
@@ -426,6 +450,7 @@ export function createRoadOverlayLeadRenderer(options = {}) {
 
     drawPathStatusText(modelPath, hudState, calibTransform, videoWidth, videoHeight, primaryStatusAnchorBox);
     drawRadarTargets(radarState, sourceModel, calibTransform, videoWidth, videoHeight);
+    drawClassicRadarTargets(overlayState?.classicRadarTracks, sourceModel, calibTransform, videoWidth, videoHeight);
   }
 
   reset();
