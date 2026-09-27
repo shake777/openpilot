@@ -11,7 +11,7 @@ REPRESENTATIVE_CAPTURE_INTERVAL_SECONDS = 10 * 60
 
 
 def representative_video_due(now: float, next_video_time: float | None) -> bool:
-  return next_video_time is None or now >= next_video_time
+  return next_video_time is not None and now >= next_video_time
 
 
 def next_representative_video_time(now: float) -> float:

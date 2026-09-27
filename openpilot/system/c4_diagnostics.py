@@ -150,6 +150,8 @@ def main() -> None:
       monotonic_now = time.monotonic()
       if not onroad:
         next_video_time = None
+      elif next_video_time is None:
+        next_video_time = next_representative_video_time(monotonic_now)
       if onroad and writer is None:
         writer = RadarCaptureWriter(spool_dir)
         scene_writer = SceneCaptureWriter(spool_dir, writer.capture_name, writer.started_at)

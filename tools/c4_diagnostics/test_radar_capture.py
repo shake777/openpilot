@@ -181,7 +181,7 @@ class TestRadarCapture(unittest.TestCase):
   def test_representative_video_uses_ten_minutes_and_thirty_seconds(self):
     self.assertEqual(REPRESENTATIVE_CAPTURE_INTERVAL_SECONDS, 600)
     self.assertEqual(VIDEO_DURATION_SECONDS, 30.0)
-    self.assertTrue(representative_video_due(100.0, None))
+    self.assertFalse(representative_video_due(100.0, None))
     next_time = next_representative_video_time(100.0)
     self.assertFalse(representative_video_due(699.999, next_time))
     self.assertTrue(representative_video_due(700.0, next_time))
