@@ -248,6 +248,7 @@ def test_dashcam_upload_report_links_public_segment_and_quotes_storage_directory
       "segmentIndex": 10,
       "ok": True,
       "remotePath": "https://upload.example/routes/HYUNDAI_IONIQ_5_PE 8b06424f3adf2bd3/00000cfb--69588de3d7--10",
+      "files": [{"kind": "rlog", "name": "rlog.zst", "size": 34}],
     }],
   }
 
@@ -255,6 +256,8 @@ def test_dashcam_upload_report_links_public_segment_and_quotes_storage_directory
   assert "HYUNDAI_IONIQ_5_PE%208b06424f3adf2bd3" in report
   assert "[00000cfb--69588de3d7--10 OK · Open](https://upload.example/routes/" in report
   assert "### Open & Analyze" not in report
+  assert "### Radar data" in report
+  assert "raw CAN and 0x238 tracked-object analysis" in report
 
 
 def test_dashcam_upload_report_adds_one_slice_link_for_consecutive_segments():

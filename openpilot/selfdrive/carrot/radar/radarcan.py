@@ -68,7 +68,7 @@ def main():
     points = msg.classicRadarTracks.init('points', len(tracks))
     for point, track in zip(points, tracks, strict=True):
       kinematics = track.kinematics
-      point.trackId = track.slot
+      point.trackId = track.track_id
       point.dRel = kinematics.d_rel
       point.yRel = kinematics.y_rel
       point.vRel = kinematics.v_rel
@@ -120,6 +120,8 @@ def main():
           if (classic_tracker is not None and src == 1
               and CLASSIC_238_START_ADDR <= address <= CLASSIC_238_END_ADDR):
             classic_tracker.update(packet_ns, address, dat, ego.v_ego)
+      if classic_tracker is not None:
+        classic_tracker.finish_scan(ego.receive_ns)
       processed += 1
       if now() - ego.receive_ns > MAX_INPUT_AGE_NS:
         publish_error('processingTimeout', now())

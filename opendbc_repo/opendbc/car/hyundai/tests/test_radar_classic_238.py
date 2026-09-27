@@ -4,10 +4,12 @@ import pytest
 from opendbc.car.hyundai.radar_classic_238 import (
   CLASSIC_238_END_ADDR,
   CLASSIC_238_START_ADDR,
+  Classic238AssociationTracker,
   Classic238Assembler,
   Classic238DisplayTracker,
   Classic238Object,
   Classic238RadarKinematics,
+  Classic238TrackObservation,
   Classic238Triplet,
   classic_238_address_role,
 )
@@ -114,10 +116,12 @@ class TestClassic238ObjectDecoder:
     )
     for offset, payload in enumerate(frames):
       tracker.update(1_000_000_000 + offset * 10_000_000, 0x238 + offset, payload, v_ego=20.0)
+    tracker.finish_scan(1_020_000_000)
 
     tracks = tracker.current(1_020_000_000)
     assert len(tracks) == 1
     assert tracks[0].slot == 0
+    assert tracks[0].track_id == 0
     assert tracks[0].status == 1
     assert tracks[0].object_sequence == 0xE8
     assert tracks[0].kinematics.v_rel == pytest.approx(-4.90)
@@ -132,6 +136,7 @@ class TestClassic238ObjectDecoder:
     )
     for offset, payload in enumerate(active):
       tracker.update(1_000_000_000 + offset, 0x238 + offset, payload, v_ego=20.0)
+    tracker.finish_scan(1_000_000_002)
     assert len(tracker.current(1_000_000_002)) == 1
 
     empty = (
@@ -141,4 +146,40 @@ class TestClassic238ObjectDecoder:
     )
     for offset, payload in enumerate(empty):
       tracker.update(1_010_000_000 + offset, 0x238 + offset, payload, v_ego=20.0)
-    assert tracker.current(1_010_000_002) == []
+    tracker.finish_scan(1_010_000_002)
+    assert len(tracker.current(1_010_000_002)) == 1
+    assert tracker.current(1_200_000_003) == []
+
+  def test_association_keeps_id_across_slot_change_and_short_loss(self):
+    tracker = Classic238AssociationTracker(max_age_ns=150_000_000)
+
+    def observation(slot, d_rel, y_rel, v_lead):
+      return Classic238TrackObservation(
+        slot=slot, status=2, object_sequence=0,
+        kinematics=Classic238RadarKinematics(
+          d_rel=d_rel, y_rel=y_rel, v_rel=-1.0, v_lead=v_lead,
+          a_rel=float("nan"), yv_rel=0.0,
+        ),
+      )
+
+    first = tracker.update_scan(1_000_000_000, [observation(3, 30.0, -1.0, 20.0)])
+    assert first[0].track_id == 0
+    assert tracker.update_scan(1_050_000_000, [])[0].track_id == 0
+    moved = tracker.update_scan(1_100_000_000, [observation(2, 29.9, -1.1, 20.2)])
+    assert len(moved) == 1
+    assert moved[0].track_id == 0
+    assert moved[0].slot == 2
+
+  def test_association_does_not_merge_distant_objects(self):
+    tracker = Classic238AssociationTracker()
+    first = Classic238TrackObservation(
+      slot=0, status=2, object_sequence=0,
+      kinematics=Classic238RadarKinematics(10.0, 0.0, 0.0, 10.0, float("nan"), 0.0),
+    )
+    distant = Classic238TrackObservation(
+      slot=0, status=2, object_sequence=1,
+      kinematics=Classic238RadarKinematics(30.0, 0.0, 0.0, 10.0, float("nan"), 0.0),
+    )
+    tracker.update_scan(1_000_000_000, [first])
+    tracks = tracker.update_scan(1_050_000_000, [distant])
+    assert {track.track_id for track in tracks} == {0, 1}

@@ -13,7 +13,7 @@ import sys
 from openpilot.selfdrive.carrot.radar.tools import radar_validation_replay as replay
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 CLASSIC_238_MAX_AGE_S = 0.15
 
 
@@ -43,6 +43,32 @@ def _classic_238_object_dict(slot, triplet):
     "counter_consistent": triplet.counter_consistent,
     "confirmed_candidate": triplet.counter_consistent and obj.status == 2,
   }
+
+
+def _track_classic_238_snapshots(snapshots):
+  opendbc_repo = replay.REPO_ROOT / "opendbc_repo"
+  if str(opendbc_repo) not in sys.path:
+    sys.path.insert(0, str(opendbc_repo))
+  from opendbc.car.hyundai.radar_classic_238 import (
+    Classic238AssociationTracker,
+    Classic238RadarKinematics,
+    Classic238TrackObservation,
+  )
+  tracker = Classic238AssociationTracker()
+  tracked_snapshots = []
+  for time_s, objects in snapshots:
+    mono_time_ns = round(time_s * 1e9)
+    observations = [Classic238TrackObservation(
+      slot=item["slot"], status=item["status"], object_sequence=item["object_sequence"],
+      kinematics=Classic238RadarKinematics(
+        d_rel=item["d_rel"], y_rel=item["y_rel"], v_rel=0.0, v_lead=item["v_lead"],
+        a_rel=float("nan"), yv_rel=0.0,
+      ),
+    ) for item in objects]
+    tracks = tracker.update_scan(mono_time_ns, observations)
+    ids_by_slot = {track.slot: track.track_id for track in tracks if track.last_seen_ns == mono_time_ns}
+    tracked_snapshots.append((time_s, [dict(item, track_id=ids_by_slot[item["slot"]]) for item in objects]))
+  return tracked_snapshots
 
 
 def load_classic_238_snapshots(log_path):
@@ -141,6 +167,7 @@ def export_frames(frames, *, sensor="auto", sensitivity=replay.VALIDATION_DEFAUL
                                           cut_in_sensitivity=sensitivity)
   output = []
   selections = []
+  classic_238_snapshots = _track_classic_238_snapshots(classic_238_snapshots)
   classic_238_snapshot_times = [snapshot[0] for snapshot in classic_238_snapshots]
   for index, frame in enumerate(frames):
     item = asdict(frame)

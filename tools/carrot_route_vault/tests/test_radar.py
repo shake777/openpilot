@@ -117,12 +117,13 @@ def test_export_adds_classic_238_objects_without_changing_selection():
     'confirmed_candidate': True,
   }])
   payload = exporter.export_frames(frames, classic_238_bus=1, classic_238_snapshots=[snapshot])
-  assert payload['schemaVersion'] == 2
+  assert payload['schemaVersion'] == 3
   assert payload['classic238'] == {
     'available': True, 'bus': 1, 'controlConnected': False, 'confirmedStatus': 2,
   }
   assert payload['frames'][0]['classic_238_objects'] == []
   assert payload['frames'][1]['classic_238_objects'][0]['slot'] == 3
+  assert payload['frames'][1]['classic_238_objects'][0]['track_id'] == 0
   assert payload['frames'][2]['classic_238_objects'][0]['confirmed_candidate'] is True
   assert payload['frames'][1]['selection']['lead_one']['track_id'] == 41
 

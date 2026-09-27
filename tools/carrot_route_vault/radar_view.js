@@ -92,7 +92,7 @@ export function attachRadarReview(video) {
     line(frame.path.map(([x,y])=>[x,-y]),'#3b9687',3);
     const [cx,cy]=xy(0,0);ctx.fillStyle='#dae3eb';ctx.fillRect(cx-7,cy-3,14,22);
     function ring(d,y,color,label,dashed=false){if(!valid(d)||!valid(y))return;const [x,z]=xy(d,y);ctx.strokeStyle=color;ctx.lineWidth=2;ctx.setLineDash(dashed?[4,3]:[]);ctx.strokeRect(x-10,z-10,20,20);ctx.setLineDash([]);ctx.fillStyle=color;ctx.fillText(label,x+13,z-6);}
-    for(const p of frame.classic_238_objects||[]){if(p.d_rel < -30||p.d_rel>range||Math.abs(p.y_rel)>15)continue;const [x,y]=xy(p.d_rel,p.y_rel),chosen=p.slot===selectedClassicSlot;ctx.beginPath();ctx.moveTo(x,y-(chosen?7:5));ctx.lineTo(x+(chosen?7:5),y);ctx.lineTo(x,y+(chosen?7:5));ctx.lineTo(x-(chosen?7:5),y);ctx.closePath();ctx.strokeStyle=p.confirmed_candidate?'#35e0c1':'#7d8792';ctx.lineWidth=chosen?2.5:1.5;ctx.stroke();ctx.fillStyle=ctx.strokeStyle;ctx.fillText(`C${p.slot}:S${p.status}`,x+7,y-7);hitPoints.push({x,y,kind:'classic',slot:p.slot});}
+    for(const p of frame.classic_238_objects||[]){if(p.d_rel < -30||p.d_rel>range||Math.abs(p.y_rel)>15)continue;const [x,y]=xy(p.d_rel,p.y_rel),chosen=p.slot===selectedClassicSlot;ctx.beginPath();ctx.moveTo(x,y-(chosen?7:5));ctx.lineTo(x+(chosen?7:5),y);ctx.lineTo(x,y+(chosen?7:5));ctx.lineTo(x-(chosen?7:5),y);ctx.closePath();ctx.strokeStyle=p.confirmed_candidate?'#35e0c1':'#7d8792';ctx.lineWidth=chosen?2.5:1.5;ctx.stroke();ctx.fillStyle=ctx.strokeStyle;ctx.fillText(`T${p.track_id??p.slot} C${p.slot}:S${p.status}`,x+7,y-7);hitPoints.push({x,y,kind:'classic',slot:p.slot});}
     for(const p of frame.points||[]){if(p.d_rel < -30||p.d_rel>range||Math.abs(p.y_rel)>15)continue;const [x,y]=xy(p.d_rel,p.y_rel);const chosen=p.track_id===selectedTrack;ctx.beginPath();ctx.arc(x,y,chosen?6:3.5,0,Math.PI*2);ctx.fillStyle=p.source.startsWith('corner')?'#cd91ff':'#56baff';ctx.fill();ctx.fillText(String(p.track_id),x+6,y+12);hitPoints.push({x,y,id:p.track_id});}
     for(const lead of frame.model_leads||[]){if(lead.probability>=.1)ring(lead.x-payload.radarToCamera,-lead.y,'#ffb653',`V ${num(lead.probability,2)}`);}
     for(const [key,label] of [['recorded_one','R1'],['recorded_two','R2']]){const p=frame[key];if(p?.status)ring(p.d_rel,p.y_rel,'#ffda70',label,true);}
@@ -176,7 +176,7 @@ export function attachRadarReview(video) {
         if(response.status===202||response.status===503){if(Date.now()>deadline)throw new Error('분석 준비가 지연되고 있습니다. 잠시 후 다시 불러와 주세요.');await new Promise((resolve,reject)=>{const abort=()=>{clearTimeout(timer);reject(new DOMException('Aborted','AbortError'));};const timer=setTimeout(()=>{signal.removeEventListener('abort',abort);resolve();},2000);signal.addEventListener('abort',abort,{once:true});});continue;}
         if(!response.ok)throw new Error(response.status===404?'이 세그먼트에는 분석할 로그가 없습니다.':response.status===422?'레이더 분석에 실패했습니다. 로그 또는 서버 분석 환경을 확인해 주세요.':`레이더 데이터를 불러오지 못했습니다 (${response.status}).`);
         const data=await response.json();if(token!==generation)return;
-        if(data.schemaVersion!==2||!Array.isArray(data.frames)||!data.frames.length)throw new Error('레이더 검증 데이터가 비어 있습니다.');
+        if(data.schemaVersion!==3||!Array.isArray(data.frames)||!data.frames.length)throw new Error('레이더 검증 데이터가 비어 있습니다.');
         data.videoAligned=data.videoAligned&&Boolean(selected.videoUrl);
         payload=data;frames=data.frames;times=frames.map(f=>data.videoAligned?f.video_time_s:f.time_s);
         graphTimes=new Map(frames.map((f,i)=>[f.time_s,times[i]]));graphCacheKey='';

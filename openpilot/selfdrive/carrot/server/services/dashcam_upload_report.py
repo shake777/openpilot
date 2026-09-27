@@ -102,6 +102,10 @@ def upload_message_lines(payload: dict[str, Any], max_results: int | None = None
   result_items = uploaded + failed
   visible_items = result_items if max_results is None else result_items[:max_results]
   visible_uploaded = [item for item in visible_items if item.get("ok")]
+  radar_logs = sum(
+    1 for item in visible_uploaded
+    if any(str(file.get("kind") or "") == "rlog" for file in item.get("files") or [])
+  )
   lines = [
     "# Carrot Dashcam Upload",
     "### Upload",
@@ -114,6 +118,11 @@ def upload_message_lines(payload: dict[str, Any], max_results: int | None = None
     f"- Branch: {meta.get('branch') or 'unknown'}",
     f"- Commit: {commit_text} ({commit_date})",
   ]
+  if radar_logs:
+    lines.extend((
+      "### Radar data",
+      f"- {radar_logs} full rlog segment(s) include raw CAN and 0x238 tracked-object analysis in Open & Analyze",
+    ))
 
   runs = _consecutive_runs(visible_uploaded)
   if runs:

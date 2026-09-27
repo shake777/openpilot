@@ -7,6 +7,9 @@ CLASSIC_238_SLOT_COUNT = 10
 CLASSIC_238_FRAMES_PER_SLOT = 3
 CLASSIC_238_END_ADDR = CLASSIC_238_START_ADDR + CLASSIC_238_SLOT_COUNT * CLASSIC_238_FRAMES_PER_SLOT - 1
 CLASSIC_238_MAX_TRIPLET_AGE_NS = 150_000_000
+CLASSIC_238_MAX_D_REL_DELTA_M = 3.0
+CLASSIC_238_MAX_Y_REL_DELTA_M = 1.5
+CLASSIC_238_MAX_V_LEAD_DELTA_MS = 5.0
 
 
 @dataclass(frozen=True)
@@ -79,6 +82,7 @@ class Classic238RadarKinematics:
 
 @dataclass(frozen=True)
 class Classic238DisplayTrack:
+  track_id: int
   slot: int
   status: int
   object_sequence: int
@@ -86,11 +90,97 @@ class Classic238DisplayTrack:
   last_seen_ns: int
 
 
+@dataclass(frozen=True)
+class Classic238TrackObservation:
+  slot: int
+  status: int
+  object_sequence: int
+  kinematics: Classic238RadarKinematics
+
+
+class Classic238AssociationTracker:
+  def __init__(self, max_age_ns: int = CLASSIC_238_MAX_TRIPLET_AGE_NS):
+    self.max_age_ns = max_age_ns
+    self.next_track_id = 0
+    self.tracks: dict[int, Classic238DisplayTrack] = {}
+
+  @staticmethod
+  def _association_cost(track: Classic238DisplayTrack, observation: Classic238TrackObservation,
+                        mono_time_ns: int) -> float | None:
+    age_s = max(0.0, (mono_time_ns - track.last_seen_ns) * 1e-9)
+    predicted_d_rel = track.kinematics.d_rel + track.kinematics.v_rel * age_s
+    d_delta = abs(observation.kinematics.d_rel - predicted_d_rel)
+    y_delta = abs(observation.kinematics.y_rel - track.kinematics.y_rel)
+    v_delta = abs(observation.kinematics.v_lead - track.kinematics.v_lead)
+    if (d_delta > CLASSIC_238_MAX_D_REL_DELTA_M
+        or y_delta > CLASSIC_238_MAX_Y_REL_DELTA_M
+        or v_delta > CLASSIC_238_MAX_V_LEAD_DELTA_MS):
+      return None
+    slot_penalty = 0.0 if observation.slot == track.slot else 0.2
+    return (d_delta / CLASSIC_238_MAX_D_REL_DELTA_M
+            + y_delta / CLASSIC_238_MAX_Y_REL_DELTA_M
+            + v_delta / CLASSIC_238_MAX_V_LEAD_DELTA_MS
+            + slot_penalty)
+
+  def update_scan(self, mono_time_ns: int,
+                  observations: list[Classic238TrackObservation]) -> list[Classic238DisplayTrack]:
+    self.current(mono_time_ns)
+    pairs = []
+    for track_id, track in self.tracks.items():
+      for index, observation in enumerate(observations):
+        cost = self._association_cost(track, observation, mono_time_ns)
+        if cost is not None:
+          pairs.append((cost, track_id, index))
+
+    assigned_tracks = set()
+    assigned_observations = set()
+    for _, track_id, index in sorted(pairs):
+      if track_id in assigned_tracks or index in assigned_observations:
+        continue
+      observation = observations[index]
+      self.tracks[track_id] = Classic238DisplayTrack(
+        track_id=track_id, slot=observation.slot, status=observation.status,
+        object_sequence=observation.object_sequence, kinematics=observation.kinematics,
+        last_seen_ns=mono_time_ns,
+      )
+      assigned_tracks.add(track_id)
+      assigned_observations.add(index)
+
+    for index, observation in enumerate(observations):
+      if index in assigned_observations:
+        continue
+      track_id = self.next_track_id
+      self.next_track_id += 1
+      self.tracks[track_id] = Classic238DisplayTrack(
+        track_id=track_id, slot=observation.slot, status=observation.status,
+        object_sequence=observation.object_sequence, kinematics=observation.kinematics,
+        last_seen_ns=mono_time_ns,
+      )
+    return self.current(mono_time_ns)
+
+  def current(self, mono_time_ns: int) -> list[Classic238DisplayTrack]:
+    stale_ids = [track_id for track_id, track in self.tracks.items()
+                 if mono_time_ns - track.last_seen_ns > self.max_age_ns]
+    for track_id in stale_ids:
+      del self.tracks[track_id]
+    return [self.tracks[track_id] for track_id in sorted(self.tracks)]
+
+
 class Classic238DisplayTracker:
   def __init__(self, max_age_ns: int = CLASSIC_238_MAX_TRIPLET_AGE_NS):
     self.max_age_ns = max_age_ns
     self.assembler = Classic238Assembler(max_age_ns=max_age_ns)
-    self.tracks: dict[int, Classic238DisplayTrack] = {}
+    self.association = Classic238AssociationTracker(max_age_ns=max_age_ns)
+    self.pending: dict[int, Classic238TrackObservation] = {}
+    self.pending_counter: int | None = None
+
+  def _flush(self, mono_time_ns: int) -> None:
+    if self.pending:
+      self.association.update_scan(mono_time_ns, list(self.pending.values()))
+      self.pending.clear()
+
+  def finish_scan(self, mono_time_ns: int) -> None:
+    self._flush(mono_time_ns)
 
   def update(self, mono_time_ns: int, address: int, payload: bytes, v_ego: float) -> None:
     assembled = self.assembler.update(mono_time_ns, address, payload)
@@ -98,24 +188,22 @@ class Classic238DisplayTracker:
       return
 
     slot, triplet = assembled
+    counter = triplet.rolling_counters[0]
+    if self.pending_counter is not None and counter != self.pending_counter:
+      self._flush(mono_time_ns)
+    self.pending_counter = counter
     if triplet.obj.status == 0:
-      self.tracks.pop(slot, None)
-      return
-
-    self.tracks[slot] = Classic238DisplayTrack(
-      slot=slot,
-      status=triplet.obj.status,
-      object_sequence=triplet.object_sequence,
-      kinematics=Classic238RadarKinematics.from_triplet(triplet, v_ego),
-      last_seen_ns=mono_time_ns,
-    )
+      self.pending.pop(slot, None)
+    else:
+      self.pending[slot] = Classic238TrackObservation(
+        slot=slot, status=triplet.obj.status, object_sequence=triplet.object_sequence,
+        kinematics=Classic238RadarKinematics.from_triplet(triplet, v_ego),
+      )
+    if slot == CLASSIC_238_SLOT_COUNT - 1:
+      self._flush(mono_time_ns)
 
   def current(self, mono_time_ns: int) -> list[Classic238DisplayTrack]:
-    stale_slots = [slot for slot, track in self.tracks.items()
-                   if mono_time_ns - track.last_seen_ns > self.max_age_ns]
-    for slot in stale_slots:
-      del self.tracks[slot]
-    return [self.tracks[slot] for slot in sorted(self.tracks)]
+    return self.association.current(mono_time_ns)
 
 
 class Classic238Assembler:
