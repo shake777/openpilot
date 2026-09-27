@@ -12,6 +12,11 @@ from openpilot.selfdrive.carrot.radar.can_batch import MAX_INPUT_AGE_NS, RadarCa
 from openpilot.selfdrive.carrot.radar.lateral import set_radar_track_flip
 from openpilot.selfdrive.pandad import can_capnp_to_list
 from opendbc.car.car_helpers import interfaces
+from opendbc.car.hyundai.radar_classic_238 import (
+  CLASSIC_238_END_ADDR,
+  CLASSIC_238_START_ADDR,
+  Classic238DisplayTracker,
+)
 
 
 def main():
@@ -21,12 +26,13 @@ def main():
   poller = messaging.Poller()
   can_sock = messaging.sub_sock('can', poller=poller, conflate=False)
   state_sock = messaging.sub_sock('carState', poller=poller, conflate=False)
-  pm = messaging.PubMaster(['liveTracks'])
+  pm = messaging.PubMaster(['liveTracks', 'classicRadarTracks'])
   CP = messaging.log_from_bytes(Params().get('CarParams', block=True), car.CarParams)
   radar_interface = interfaces[CP.carFingerprint].RadarInterface
   radar = radar_interface(CP)
   # Latch once per onroad start; never change a track's side during a drive.
   radar_track_flip = Params().get_bool('RadarTrackFlip')
+  classic_tracker = Classic238DisplayTracker() if CP.brand == 'hyundai' else None
   batches = RadarCanBatches()
   diagnostics = RuntimeDiagnostics('radarcan', cloudlog.event)
   last_input_ns = time.monotonic_ns()
@@ -50,7 +56,31 @@ def main():
       msg.liveTracks.errors.canError = True
       msg.liveTracks.radarTrackFlipped = radar_track_flip
       pm.send('liveTracks', msg)
+      classic_msg = messaging.new_message('classicRadarTracks')
+      classic_msg.valid = False
+      pm.send('classicRadarTracks', classic_msg)
       last_error_publish_ns = now_ns
+
+  def publish_classic_tracks(now_ns):
+    tracks = classic_tracker.current(now_ns) if classic_tracker is not None else []
+    msg = messaging.new_message('classicRadarTracks')
+    msg.valid = True
+    points = msg.classicRadarTracks.init('points', len(tracks))
+    for point, track in zip(points, tracks, strict=True):
+      kinematics = track.kinematics
+      point.trackId = track.slot
+      point.dRel = kinematics.d_rel
+      point.yRel = kinematics.y_rel
+      point.vRel = kinematics.v_rel
+      point.aRel = kinematics.a_rel
+      point.yvRel = kinematics.yv_rel
+      point.measured = True
+      point.vLead = kinematics.v_lead
+      point.aLead = float('nan')
+      point.jLead = float('nan')
+      point.radarSource = 'frontRadar'
+      point.trackState = track.status
+    pm.send('classicRadarTracks', msg)
 
   while True:
     poller.poll(20)
@@ -85,6 +115,10 @@ def main():
       last_input_ns = ego.receive_ns
       max_input_age_ms = max(max_input_age_ms, (now_ns - ego.receive_ns) / 1e6)
       result = radar.update_carrot(ego.v_ego, ego.a_ego, ego.receive_ns * 1e-9, packets)
+      for packet_ns, packet in packets:
+        if (classic_tracker is not None and packet.src == 1
+            and CLASSIC_238_START_ADDR <= packet.address <= CLASSIC_238_END_ADDR):
+          classic_tracker.update(packet_ns, packet.address, packet.dat, ego.v_ego)
       processed += 1
       if now() - ego.receive_ns > MAX_INPUT_AGE_NS:
         publish_error('processingTimeout', now())
@@ -96,6 +130,7 @@ def main():
         # Assignment copies the result: decoder points/filter history stay raw.
         set_radar_track_flip(msg.liveTracks, radar_track_flip)
         pm.send('liveTracks', msg)
+        publish_classic_tracks(ego.receive_ns)
     now_ns = now()
     if now_ns - min(last_input_ns, last_can_input_ns) > MAX_INPUT_AGE_NS:
       publish_error('inputTimeout', now_ns)

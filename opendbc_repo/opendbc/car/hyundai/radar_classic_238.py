@@ -77,6 +77,47 @@ class Classic238RadarKinematics:
                a_rel=float("nan"), yv_rel=0.0)
 
 
+@dataclass(frozen=True)
+class Classic238DisplayTrack:
+  slot: int
+  status: int
+  object_sequence: int
+  kinematics: Classic238RadarKinematics
+  last_seen_ns: int
+
+
+class Classic238DisplayTracker:
+  def __init__(self, max_age_ns: int = CLASSIC_238_MAX_TRIPLET_AGE_NS):
+    self.max_age_ns = max_age_ns
+    self.assembler = Classic238Assembler(max_age_ns=max_age_ns)
+    self.tracks: dict[int, Classic238DisplayTrack] = {}
+
+  def update(self, mono_time_ns: int, address: int, payload: bytes, v_ego: float) -> None:
+    assembled = self.assembler.update(mono_time_ns, address, payload)
+    if assembled is None:
+      return
+
+    slot, triplet = assembled
+    if triplet.obj.status == 0:
+      self.tracks.pop(slot, None)
+      return
+
+    self.tracks[slot] = Classic238DisplayTrack(
+      slot=slot,
+      status=triplet.obj.status,
+      object_sequence=triplet.object_sequence,
+      kinematics=Classic238RadarKinematics.from_triplet(triplet, v_ego),
+      last_seen_ns=mono_time_ns,
+    )
+
+  def current(self, mono_time_ns: int) -> list[Classic238DisplayTrack]:
+    stale_slots = [slot for slot, track in self.tracks.items()
+                   if mono_time_ns - track.last_seen_ns > self.max_age_ns]
+    for slot in stale_slots:
+      del self.tracks[slot]
+    return [self.tracks[slot] for slot in sorted(self.tracks)]
+
+
 class Classic238Assembler:
   def __init__(self, max_age_ns: int = CLASSIC_238_MAX_TRIPLET_AGE_NS):
     self.max_age_ns = max_age_ns

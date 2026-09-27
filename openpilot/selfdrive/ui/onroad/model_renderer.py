@@ -162,6 +162,7 @@ class ModelRenderer(Widget):
     timing.call('lanes', self._draw_lane_lines_carrot, sm)
     timing.call('blindspot', self._draw_blind_spot_carrot, sm)
     timing.call('radar', self._draw_radar_info_carrot, sm)
+    timing.call('classicRadar', self._draw_classic_radar_tracks_carrot, sm)
     timing.finish()
 
   def _update_raw_points(self, model):
@@ -1181,6 +1182,40 @@ class ModelRenderer(Widget):
             draw_text_ui_style(f"{d_rel:.1f}", int(x), int(y + 30), 30, rl.Color(255, 255, 255, 255), align="center", y_offset=0.0)
         elif self._carrot_show_radar_info >= 3:
           draw_text_ui_style("*", int(x), int(y), 40, rl.Color(255, 255, 255, 255), align="center", y_offset=0.0)
+
+  def _draw_classic_radar_tracks_carrot(self, sm):
+    if not sm.valid['classicRadarTracks'] or not sm.valid['modelV2']:
+      return
+
+    model = sm['modelV2']
+    if len(model.laneLines) < 3:
+      return
+    lane_line = model.laneLines[2]
+    lane_x = np.array(lane_line.x, dtype=np.float32)
+    lane_z = np.array(lane_line.z, dtype=np.float32)
+
+    for point in sm['classicRadarTracks'].points:
+      d_rel = float(point.dRel)
+      y_rel = float(point.yRel)
+      if not 2.5 < d_rel <= 250.0 or abs(y_rel) > 20.0:
+        continue
+      idx = self._get_path_length_idx(lane_x, d_rel)
+      if idx >= len(lane_z):
+        continue
+      side = self._map_to_screen(d_rel, -y_rel, float(lane_z[idx]) - 0.61)
+      if side is None:
+        continue
+
+      x, y = int(side[0]), int(side[1])
+      color = rl.Color(0, 220, 255, 230)
+      rl.draw_circle(x, y, 9.0, color)
+      speed = float(point.vRel) * (3.6 if ui_state.is_metric else 2.2369363)
+      distance = d_rel if ui_state.is_metric else d_rel * 3.28084
+      draw_text_ui_style(f"238-{int(point.trackId) + 1} S{int(point.trackState)} y{y_rel:+.1f}", x, y - 34, 24,
+                         color, align="center", y_offset=0.0)
+      units = ("m", "km/h") if ui_state.is_metric else ("ft", "mph")
+      draw_text_ui_style(f"{distance:.0f}{units[0]} {speed:+.0f}{units[1]}", x, y + 12, 24,
+                         rl.Color(255, 255, 255, 230), align="center", y_offset=0.0)
 
 
   def _build_path_polygon_update_line_data2_carrot(self, line: np.ndarray, width_apply: float, z_off_start: float, z_off_end: float, max_idx: int, allow_invert: bool = True) -> np.ndarray:

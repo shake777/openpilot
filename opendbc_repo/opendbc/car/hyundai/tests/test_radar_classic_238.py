@@ -5,6 +5,7 @@ from opendbc.car.hyundai.radar_classic_238 import (
   CLASSIC_238_END_ADDR,
   CLASSIC_238_START_ADDR,
   Classic238Assembler,
+  Classic238DisplayTracker,
   Classic238Object,
   Classic238RadarKinematics,
   Classic238Triplet,
@@ -103,3 +104,41 @@ class TestClassic238ObjectDecoder:
     assert point.v_lead == pytest.approx(15.10)
     assert point.v_rel == pytest.approx(-4.90)
     assert point.yv_rel == 0.0
+
+  def test_display_tracker_keeps_active_track_and_expires_it(self):
+    tracker = Classic238DisplayTracker(max_age_ns=30_000_000)
+    frames = (
+      bytes.fromhex("0c797fdb8fe1f204"),
+      bytes.fromhex("0f9d774945c80002"),
+      bytes.fromhex("085c40e8ffe084ec"),
+    )
+    for offset, payload in enumerate(frames):
+      tracker.update(1_000_000_000 + offset * 10_000_000, 0x238 + offset, payload, v_ego=20.0)
+
+    tracks = tracker.current(1_020_000_000)
+    assert len(tracks) == 1
+    assert tracks[0].slot == 0
+    assert tracks[0].status == 1
+    assert tracks[0].object_sequence == 0xE8
+    assert tracks[0].kinematics.v_rel == pytest.approx(-4.90)
+    assert tracker.current(1_050_000_001) == []
+
+  def test_display_tracker_removes_empty_slot(self):
+    tracker = Classic238DisplayTracker()
+    active = (
+      bytes.fromhex("0c797fdb8fe1f204"),
+      bytes.fromhex("0f9d774945c80002"),
+      bytes.fromhex("085c40e8ffe084ec"),
+    )
+    for offset, payload in enumerate(active):
+      tracker.update(1_000_000_000 + offset, 0x238 + offset, payload, v_ego=20.0)
+    assert len(tracker.current(1_000_000_002)) == 1
+
+    empty = (
+      bytes.fromhex("0000000000000000"),
+      bytes.fromhex("0000000000000000"),
+      bytes.fromhex("0000000100000000"),
+    )
+    for offset, payload in enumerate(empty):
+      tracker.update(1_010_000_000 + offset, 0x238 + offset, payload, v_ego=20.0)
+    assert tracker.current(1_010_000_002) == []

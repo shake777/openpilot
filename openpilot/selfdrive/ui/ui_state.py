@@ -42,6 +42,7 @@ class UIState:
         "onroadEvents",
         "liveCalibration",
         "radarState",
+        "classicRadarTracks",
         "deviceState",
         "pandaStates",
         "carParams",
