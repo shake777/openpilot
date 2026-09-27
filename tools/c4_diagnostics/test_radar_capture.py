@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from tools.c4_diagnostics.auto_upload import deterministic_upload_id, load_or_start_state, pending_captures, upload_one
+from tools.c4_diagnostics.can_inventory import MAX_INVENTORY_BYTES, CanInventoryWriter
 from tools.c4_diagnostics.radar_capture import MAX_CAPTURE_BYTES, MAX_PENDING_DIAGNOSTICS, RadarCaptureWriter, capture_can_frame, iter_records
 from tools.c4_diagnostics.scene_capture import MAX_SCENE_BYTES, SceneCaptureWriter, build_scene_frame
 from tools.c4_diagnostics.upload import MAX_TOTAL_BYTES, UploadConfig
@@ -141,13 +142,32 @@ class TestRadarCapture(unittest.TestCase):
       root = Path(temp_dir)
       capture = root / "capture.c4radar"
       scene = root / "capture.c4scene"
+      inventory = root / "capture.c4can.json"
       capture.write_bytes(b"radar")
       scene.write_text('{"schema":"c4-scene-v1"}\n', encoding="utf-8")
+      inventory.write_text('{"schema":"c4-can-inventory-v1"}\n', encoding="utf-8")
       state_path = root / "state.json"
       state = {"schema": 2, "started_at": 1, "uploaded": {}}
       with patch("tools.c4_diagnostics.auto_upload.upload", return_value={"upload_id": "id"}) as send:
         upload_one(UploadConfig("https://example.com", "key"), "c4-001", state, state_path, capture)
-      self.assertEqual(send.call_args.args[3], [capture, scene])
+      self.assertEqual(send.call_args.args[3], [capture, scene, inventory])
+
+  def test_can_inventory_keeps_incoming_counts_and_change_mask(self):
+    with tempfile.TemporaryDirectory() as temp_dir:
+      writer = CanInventoryWriter(Path(temp_dir), "capture")
+      self.assertTrue(writer.append(1_000_000_000, 0x123, 1, b"\x10\x20"))
+      self.assertTrue(writer.append(2_000_000_000, 0x123, 1, b"\x11\x20"))
+      self.assertFalse(writer.append(2_000_000_000, 0x420, 128, b"\x01"))
+      output = writer.finalize()
+      saved = __import__("json").loads(output.read_text(encoding="utf-8"))
+    self.assertTrue(saved["incoming_only"])
+    self.assertFalse(saved["transmit_performed"])
+    self.assertEqual(saved["total_frames"], 2)
+    self.assertEqual(saved["bus_counts"], {"1": 2})
+    self.assertEqual(saved["addresses"]["1:0x123:2"], {
+      "count": 2, "rate_hz": 1.0, "first_hex": "1020", "last_hex": "1120",
+      "varying_mask_hex": "0100",
+    })
 
   def test_upload_ignores_empty_optional_companion(self):
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -163,7 +183,7 @@ class TestRadarCapture(unittest.TestCase):
       self.assertEqual(send.call_args.args[3], [capture])
 
   def test_capture_group_stays_below_upload_limit(self):
-    self.assertLess(MAX_CAPTURE_BYTES + MAX_SCENE_BYTES, MAX_TOTAL_BYTES)
+    self.assertLess(MAX_CAPTURE_BYTES + MAX_SCENE_BYTES + MAX_INVENTORY_BYTES, MAX_TOTAL_BYTES)
 
 
 if __name__ == "__main__":

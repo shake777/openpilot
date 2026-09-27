@@ -11,6 +11,7 @@ import openpilot.cereal.messaging as messaging
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
 from tools.c4_diagnostics.auto_upload import load_or_start_state, pending_captures, upload_one
+from tools.c4_diagnostics.can_inventory import CanInventoryWriter
 from tools.c4_diagnostics.parked_probe import summarize_last_once
 from tools.c4_diagnostics.radar_capture import MAX_PENDING_DIAGNOSTICS, RadarCaptureWriter, capture_can_frame
 from tools.c4_diagnostics.scene_capture import SceneCaptureWriter, build_scene_frame
@@ -46,12 +47,16 @@ def write_meminfo(capture: Path) -> None:
     os.chmod(target, 0o600)
 
 
-def finalize_capture(writer: RadarCaptureWriter, scene_writer: SceneCaptureWriter) -> None:
+def finalize_capture(writer: RadarCaptureWriter, scene_writer: SceneCaptureWriter,
+                     inventory_writer: CanInventoryWriter) -> None:
   scene = scene_writer.finalize()
+  inventory = inventory_writer.finalize()
   capture = writer.finalize()
   if capture is None:
     if scene is not None:
       scene.unlink(missing_ok=True)
+    if inventory is not None:
+      inventory.unlink(missing_ok=True)
     return
   write_meminfo(capture)
 
@@ -122,6 +127,7 @@ def main() -> None:
   sm = messaging.SubMaster(["deviceState", "carState", "modelV2", "liveTracks", "radarState", "carControl"])
   writer = None
   scene_writer = None
+  inventory_writer = None
   next_scene_time = time.monotonic()
   try:
     while not stop_event.is_set():
@@ -135,15 +141,19 @@ def main() -> None:
       if onroad and writer is None:
         writer = RadarCaptureWriter(spool_dir)
         scene_writer = SceneCaptureWriter(spool_dir, writer.capture_name, writer.started_at)
+        inventory_writer = CanInventoryWriter(spool_dir, writer.capture_name)
         next_scene_time = time.monotonic()
-      elif not onroad and writer is not None and scene_writer is not None:
-        finalize_capture(writer, scene_writer)
+      elif not onroad and writer is not None and scene_writer is not None and inventory_writer is not None:
+        finalize_capture(writer, scene_writer, inventory_writer)
         writer = None
         scene_writer = None
+        inventory_writer = None
 
       message = messaging.recv_one_or_none(can_sock)
       if message is not None:
         for frame in message.can:
+          if inventory_writer is not None:
+            inventory_writer.append(message.logMonoTime, frame.address, frame.src, bytes(frame.dat))
           capture_can_frame(writer, pending_diagnostics, message.logMonoTime, frame.address, frame.src, bytes(frame.dat))
       for sent in messaging.drain_sock(sendcan_sock, wait_for_one=False):
         for frame in sent.sendcan:
@@ -158,13 +168,14 @@ def main() -> None:
         ))
         next_scene_time = monotonic_now + SCENE_INTERVAL_SECONDS
 
-      if writer is not None and scene_writer is not None and (writer.should_rotate(now) or scene_writer.should_rotate(now)):
-        finalize_capture(writer, scene_writer)
+      if writer is not None and scene_writer is not None and inventory_writer is not None and (writer.should_rotate(now) or scene_writer.should_rotate(now)):
+        finalize_capture(writer, scene_writer, inventory_writer)
         writer = RadarCaptureWriter(spool_dir, now)
         scene_writer = SceneCaptureWriter(spool_dir, writer.capture_name, writer.started_at)
+        inventory_writer = CanInventoryWriter(spool_dir, writer.capture_name)
   finally:
-    if writer is not None and scene_writer is not None:
-      finalize_capture(writer, scene_writer)
+    if writer is not None and scene_writer is not None and inventory_writer is not None:
+      finalize_capture(writer, scene_writer, inventory_writer)
     stop_event.set()
     uploader.join(timeout=5)
 
