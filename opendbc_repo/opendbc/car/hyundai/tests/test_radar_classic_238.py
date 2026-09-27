@@ -4,7 +4,9 @@ import pytest
 from opendbc.car.hyundai.radar_classic_238 import (
   CLASSIC_238_END_ADDR,
   CLASSIC_238_START_ADDR,
+  Classic238Assembler,
   Classic238Object,
+  Classic238RadarKinematics,
   Classic238Triplet,
   classic_238_address_role,
 )
@@ -63,3 +65,41 @@ class TestClassic238ObjectDecoder:
 
     assert not triplet.counter_consistent
     assert triplet.rolling_counters == (0, 1, 0)
+
+  def test_live_assembler_emits_one_complete_consistent_triplet(self):
+    assembler = Classic238Assembler()
+    frames = (
+      bytes.fromhex("0c797fdb8fe1f204"),
+      bytes.fromhex("0f9d774945c80002"),
+      bytes.fromhex("085c40e8ffe084ec"),
+    )
+    assert assembler.update(1_000_000_000, 0x238, frames[0]) is None
+    assert assembler.update(1_010_000_000, 0x239, frames[1]) is None
+    slot, triplet = assembler.update(1_020_000_000, 0x23A, frames[2])
+    assert slot == 0
+    assert triplet.object_sequence == 0xE8
+    assert assembler.update(1_020_000_000, 0x23A, frames[2]) is None
+
+  def test_live_assembler_rejects_counter_mismatch_and_stale_triplet(self):
+    mismatch = Classic238Assembler()
+    assert mismatch.update(1_000_000_000, 0x238, bytes.fromhex("0c797fdb8fe1f204")) is None
+    assert mismatch.update(1_010_000_000, 0x239, bytes.fromhex("4f9d774945c80002")) is None
+    assert mismatch.update(1_020_000_000, 0x23A, bytes.fromhex("085c40e8ffe084ec")) is None
+
+    stale = Classic238Assembler(max_age_ns=10)
+    assert stale.update(100, 0x238, bytes.fromhex("0c797fdb8fe1f204")) is None
+    assert stale.update(105, 0x239, bytes.fromhex("0f9d774945c80002")) is None
+    assert stale.update(120, 0x23A, bytes.fromhex("085c40e8ffe084ec")) is None
+
+  def test_radar_kinematics_are_ready_for_radar_point_mapping(self):
+    triplet = Classic238Triplet.from_frames(
+      bytes.fromhex("0c797fdb8fe1f204"),
+      bytes.fromhex("0f9d774945c80002"),
+      bytes.fromhex("085c40e8ffe084ec"),
+    )
+    point = Classic238RadarKinematics.from_triplet(triplet, v_ego=20.0)
+    assert point.d_rel == pytest.approx(19.95)
+    assert point.y_rel == pytest.approx(0.15)
+    assert point.v_lead == pytest.approx(15.10)
+    assert point.v_rel == pytest.approx(-4.90)
+    assert point.yv_rel == 0.0

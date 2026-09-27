@@ -6,6 +6,7 @@ CLASSIC_238_START_ADDR = 0x238
 CLASSIC_238_SLOT_COUNT = 10
 CLASSIC_238_FRAMES_PER_SLOT = 3
 CLASSIC_238_END_ADDR = CLASSIC_238_START_ADDR + CLASSIC_238_SLOT_COUNT * CLASSIC_238_FRAMES_PER_SLOT - 1
+CLASSIC_238_MAX_TRIPLET_AGE_NS = 150_000_000
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,49 @@ class Classic238Triplet:
     object_sequence = third[3]
     return cls(obj=obj, rolling_counters=(first_counter, second_counter, third_counter),
                object_sequence=object_sequence, second_frame=second, third_frame=third)
+
+
+@dataclass(frozen=True)
+class Classic238RadarKinematics:
+  d_rel: float
+  y_rel: float
+  v_rel: float
+  v_lead: float
+  a_rel: float
+  yv_rel: float
+
+  @classmethod
+  def from_triplet(cls, triplet: Classic238Triplet, v_ego: float) -> "Classic238RadarKinematics":
+    return cls(d_rel=triplet.obj.d_rel, y_rel=triplet.obj.y_rel,
+               v_rel=triplet.obj.v_lead - v_ego, v_lead=triplet.obj.v_lead,
+               a_rel=float("nan"), yv_rel=0.0)
+
+
+class Classic238Assembler:
+  def __init__(self, max_age_ns: int = CLASSIC_238_MAX_TRIPLET_AGE_NS):
+    self.max_age_ns = max_age_ns
+    self.frames: list[list[tuple[int, bytes] | None]] = [
+      [None] * CLASSIC_238_FRAMES_PER_SLOT for _ in range(CLASSIC_238_SLOT_COUNT)
+    ]
+    self.last_emitted: list[tuple[int, int, int] | None] = [None] * CLASSIC_238_SLOT_COUNT
+
+  def update(self, mono_time_ns: int, address: int, payload: bytes) -> tuple[int, Classic238Triplet] | None:
+    slot, role = classic_238_address_role(address)
+    if len(payload) != 8:
+      raise ValueError(f"classic 0x238 frame must be 8 bytes, got {len(payload)}")
+    self.frames[slot][role] = (mono_time_ns, payload)
+    complete = self.frames[slot]
+    if any(frame is None for frame in complete):
+      return None
+    typed = [frame for frame in complete if frame is not None]
+    times = tuple(frame[0] for frame in typed)
+    if max(times) - min(times) > self.max_age_ns or mono_time_ns - max(times) > self.max_age_ns:
+      return None
+    triplet = Classic238Triplet.from_frames(*(frame[1] for frame in typed))
+    if not triplet.counter_consistent or self.last_emitted[slot] == times:
+      return None
+    self.last_emitted[slot] = times
+    return slot, triplet
 
 
 def classic_238_address_role(address: int) -> tuple[int, int]:
