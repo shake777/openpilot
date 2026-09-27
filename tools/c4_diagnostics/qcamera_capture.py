@@ -18,6 +18,10 @@ def next_representative_video_time(now: float) -> float:
   return now + REPRESENTATIVE_CAPTURE_INTERVAL_SECONDS
 
 
+def representative_video_rollover_due(now: float, next_video_time: float | None, video_active: bool) -> bool:
+  return not video_active and representative_video_due(now, next_video_time)
+
+
 class QCameraCaptureWriter:
   def __init__(self, spool_dir: Path, capture_name: str):
     self.partial_path = spool_dir / f"{capture_name}.qcamera.h264.partial"

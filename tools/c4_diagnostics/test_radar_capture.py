@@ -15,6 +15,7 @@ from tools.c4_diagnostics.qcamera_capture import (
   VIDEO_DURATION_SECONDS,
   next_representative_video_time,
   representative_video_due,
+  representative_video_rollover_due,
 )
 from tools.c4_diagnostics.radar_capture import MAX_CAPTURE_BYTES, MAX_PENDING_DIAGNOSTICS, RadarCaptureWriter, capture_can_frame, iter_records
 from tools.c4_diagnostics.scene_capture import MAX_SCENE_BYTES, SceneCaptureWriter, build_scene_frame
@@ -185,6 +186,9 @@ class TestRadarCapture(unittest.TestCase):
     next_time = next_representative_video_time(100.0)
     self.assertFalse(representative_video_due(699.999, next_time))
     self.assertTrue(representative_video_due(700.0, next_time))
+    self.assertFalse(representative_video_rollover_due(699.999, next_time, False))
+    self.assertTrue(representative_video_rollover_due(700.0, next_time, False))
+    self.assertFalse(representative_video_rollover_due(700.0, next_time, True))
 
   def test_can_inventory_keeps_incoming_counts_and_change_mask(self):
     with tempfile.TemporaryDirectory() as temp_dir:

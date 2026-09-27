@@ -13,7 +13,12 @@ from openpilot.common.swaglog import cloudlog
 from tools.c4_diagnostics.auto_upload import load_or_start_state, pending_captures, upload_one
 from tools.c4_diagnostics.can_inventory import CanInventoryWriter
 from tools.c4_diagnostics.parked_probe import summarize_last_once
-from tools.c4_diagnostics.qcamera_capture import QCameraCaptureWriter, next_representative_video_time, representative_video_due
+from tools.c4_diagnostics.qcamera_capture import (
+  QCameraCaptureWriter,
+  next_representative_video_time,
+  representative_video_due,
+  representative_video_rollover_due,
+)
 from tools.c4_diagnostics.radar_capture import MAX_PENDING_DIAGNOSTICS, RadarCaptureWriter, capture_can_frame
 from tools.c4_diagnostics.scene_capture import SceneCaptureWriter, build_scene_frame
 from tools.c4_diagnostics.upload import UploadError, load_config
@@ -152,6 +157,13 @@ def main() -> None:
         next_video_time = None
       elif next_video_time is None:
         next_video_time = next_representative_video_time(monotonic_now)
+      if (onroad and writer is not None and scene_writer is not None and inventory_writer is not None and
+          representative_video_rollover_due(monotonic_now, next_video_time, video_writer is not None)):
+        finalize_capture(writer, scene_writer, inventory_writer, video_writer)
+        writer = None
+        scene_writer = None
+        inventory_writer = None
+        video_writer = None
       if onroad and writer is None:
         writer = RadarCaptureWriter(spool_dir)
         scene_writer = SceneCaptureWriter(spool_dir, writer.capture_name, writer.started_at)
