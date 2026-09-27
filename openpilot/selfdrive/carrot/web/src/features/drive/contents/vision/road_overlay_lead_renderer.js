@@ -11,6 +11,17 @@ function finiteNumber(value, fallback = 0) {
   return Number.isFinite(number) ? number : fallback;
 }
 
+export function formatClassicRadarLabel(radar) {
+  const trackId = finiteNumber(radar?.trackId, 0);
+  const trackState = finiteNumber(radar?.trackState, 0);
+  const confirmed = trackState === 2;
+  const dRel = finiteNumber(radar?.dRel, 0);
+  const yRel = finiteNumber(radar?.yRel, 0);
+  const vLead = finiteNumber(radar?.vLead, 0);
+  const vRel = finiteNumber(radar?.vRel, 0);
+  return `238 T${trackId} S${trackState}${confirmed ? "C" : "U"} ${dRel.toFixed(0)}m y${yRel >= 0 ? "+" : ""}${yRel.toFixed(1)} V${vLead.toFixed(1)} Δ${vRel >= 0 ? "+" : ""}${vRel.toFixed(1)}m/s`;
+}
+
 export function createRoadOverlayLeadRenderer(options = {}) {
   const context = options.context;
   const model = options.model || createRoadOverlayLeadModel(options.modelOptions);
@@ -309,16 +320,18 @@ export function createRoadOverlayLeadRenderer(options = {}) {
     const projectionLine = model.getRadarProjectionLine(sourceModel);
     if (!projectionLine) return;
     const uiScale = ui.getScale(videoWidth, videoHeight);
-    const accent = "rgba(0,220,255,0.96)";
     for (const radar of model.getClassicRadarTracks(classicRadarTracks)) {
       const dRel = finiteNumber(radar?.dRel, 0);
       if (dRel <= 2.5) continue;
       const yRel = finiteNumber(radar?.yRel, 0);
+      const trackState = finiteNumber(radar?.trackState, 0);
+      const confirmed = trackState === 2;
+      const accent = confirmed ? "rgba(53,224,193,0.96)" : "rgba(125,135,146,0.96)";
       const z = projection.samplePathZ(projectionLine, dRel) - 0.61;
       const center = projection.projectPointPrecise(calibTransform, dRel, -yRel, z);
       if (!center) continue;
       geometry.drawPolygon(geometry.circlePolygon(center.x, center.y, Math.max(7 * uiScale, 4)), accent);
-      const label = `238-${finiteNumber(radar?.trackId, 0)} ${dRel.toFixed(0)}m ${finiteNumber(radar?.vRel, 0).toFixed(1)}m/s`;
+      const label = formatClassicRadarLabel(radar);
       ui.drawText(label, center.x, center.y - 12 * uiScale, {
         fontSize: Math.max(18 * uiScale, 11),
         fontWeight: 800,

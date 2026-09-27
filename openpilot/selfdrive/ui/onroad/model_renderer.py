@@ -1207,14 +1207,18 @@ class ModelRenderer(Widget):
         continue
 
       x, y = int(side[0]), int(side[1])
-      color = rl.Color(0, 220, 255, 230)
+      confirmed = int(point.trackState) == 2
+      color = rl.Color(53, 224, 193, 230) if confirmed else rl.Color(125, 135, 146, 230)
       rl.draw_circle(x, y, 9.0, color)
-      speed = float(point.vRel) * (3.6 if ui_state.is_metric else 2.2369363)
+      speed_scale = 3.6 if ui_state.is_metric else 2.2369363
+      relative_speed = float(point.vRel) * speed_scale
+      absolute_speed = float(point.vLead) * speed_scale
       distance = d_rel if ui_state.is_metric else d_rel * 3.28084
-      draw_text_ui_style(f"238-{int(point.trackId) + 1} S{int(point.trackState)} y{y_rel:+.1f}", x, y - 34, 24,
+      confidence = "C" if confirmed else "U"
+      draw_text_ui_style(f"238 T{int(point.trackId)} S{int(point.trackState)}{confidence} y{y_rel:+.1f}", x, y - 34, 24,
                          color, align="center", y_offset=0.0)
       units = ("m", "km/h") if ui_state.is_metric else ("ft", "mph")
-      draw_text_ui_style(f"{distance:.0f}{units[0]} {speed:+.0f}{units[1]}", x, y + 12, 24,
+      draw_text_ui_style(f"{distance:.0f}{units[0]} V{absolute_speed:.0f} Δ{relative_speed:+.0f}{units[1]}", x, y + 12, 24,
                          rl.Color(255, 255, 255, 230), align="center", y_offset=0.0)
 
 
