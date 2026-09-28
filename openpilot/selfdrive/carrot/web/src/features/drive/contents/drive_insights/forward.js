@@ -130,7 +130,7 @@ function normalizePresentation(entity, presentation) {
     selected,
     visible: combined.visible !== false,
     filled: combined.filled !== false,
-    showLabel: combined.showLabel ?? (entity.kind === "lead" || entity.kind === "radar"),
+    showLabel: combined.showLabel ?? entity.kind === "lead",
     label,
     sourceLabel: nonEmptyText(combined.sourceLabel),
     radiusPx,
@@ -221,12 +221,9 @@ function shapePath(context, x, y, shape, radius) {
   context.closePath?.();
 }
 
-export function entityLabel(entity) {
+function entityLabel(entity) {
   if (entity.presentation.label) return entity.presentation.label;
-  const distance = `${entity.xM.toFixed(0)}m`;
-  if (entity.relativeSpeedMps == null) return distance;
-  const relativeSpeed = entity.relativeSpeedMps;
-  return `${distance} Δ${relativeSpeed >= 0 ? "+" : ""}${relativeSpeed.toFixed(1)}m/s`;
+  return `${entity.xM.toFixed(0)} m`;
 }
 
 function drawEntity(context, entity, palette, scene) {
