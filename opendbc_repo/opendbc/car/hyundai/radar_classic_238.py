@@ -7,6 +7,9 @@ CLASSIC_238_SLOT_COUNT = 10
 CLASSIC_238_FRAMES_PER_SLOT = 3
 CLASSIC_238_END_ADDR = CLASSIC_238_START_ADDR + CLASSIC_238_SLOT_COUNT * CLASSIC_238_FRAMES_PER_SLOT - 1
 CLASSIC_238_MAX_TRIPLET_AGE_NS = 150_000_000
+# One triplet arrives within 13.2 ms in K7 captures. The 2-bit counter repeats
+# every 4 scans (~120 ms), so frames from different scans must not be combined.
+CLASSIC_238_MAX_TRIPLET_SPREAD_NS = 30_000_000
 CLASSIC_238_MAX_D_REL_DELTA_M = 3.0
 CLASSIC_238_MAX_Y_REL_DELTA_M = 1.5
 CLASSIC_238_MAX_V_LEAD_DELTA_MS = 5.0
@@ -207,8 +210,10 @@ class Classic238DisplayTracker:
 
 
 class Classic238Assembler:
-  def __init__(self, max_age_ns: int = CLASSIC_238_MAX_TRIPLET_AGE_NS):
+  def __init__(self, max_age_ns: int = CLASSIC_238_MAX_TRIPLET_AGE_NS,
+               max_spread_ns: int = CLASSIC_238_MAX_TRIPLET_SPREAD_NS):
     self.max_age_ns = max_age_ns
+    self.max_spread_ns = min(max_spread_ns, max_age_ns)
     self.frames: list[list[tuple[int, bytes] | None]] = [
       [None] * CLASSIC_238_FRAMES_PER_SLOT for _ in range(CLASSIC_238_SLOT_COUNT)
     ]
@@ -224,7 +229,7 @@ class Classic238Assembler:
       return None
     typed = [frame for frame in complete if frame is not None]
     times = tuple(frame[0] for frame in typed)
-    if max(times) - min(times) > self.max_age_ns or mono_time_ns - max(times) > self.max_age_ns:
+    if max(times) - min(times) > self.max_spread_ns or mono_time_ns - max(times) > self.max_age_ns:
       return None
     triplet = Classic238Triplet.from_frames(*(frame[1] for frame in typed))
     if not triplet.counter_consistent or self.last_emitted[slot] == times:

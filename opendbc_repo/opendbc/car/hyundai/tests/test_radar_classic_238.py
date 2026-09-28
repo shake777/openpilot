@@ -97,6 +97,22 @@ class TestClassic238ObjectDecoder:
     assert stale.update(105, 0x239, bytes.fromhex("0f9d774945c80002")) is None
     assert stale.update(120, 0x23A, bytes.fromhex("085c40e8ffe084ec")) is None
 
+  @pytest.mark.parametrize("spread_ns, emitted", ((13_200_000, True), (30_000_000, True), (40_000_000, False)))
+  def test_live_assembler_limits_triplet_spread(self, spread_ns, emitted):
+    assembler = Classic238Assembler()
+    assert assembler.update(1_000_000_000, 0x238, bytes.fromhex("0c797fdb8fe1f204")) is None
+    assert assembler.update(1_000_000_000 + spread_ns // 2, 0x239, bytes.fromhex("0f9d774945c80002")) is None
+    result = assembler.update(1_000_000_000 + spread_ns, 0x23A, bytes.fromhex("085c40e8ffe084ec"))
+    assert (result is not None) == emitted
+
+  def test_live_assembler_rejects_same_counter_from_four_scans_earlier(self):
+    # The 2-bit counter repeats every 4 scans (~120 ms): a stale first frame
+    # with a matching counter must not be combined with the current scan.
+    assembler = Classic238Assembler()
+    assert assembler.update(1_000_000_000, 0x238, bytes.fromhex("0c797fdb8fe1f204")) is None
+    assert assembler.update(1_120_000_000, 0x239, bytes.fromhex("0f9d774945c80002")) is None
+    assert assembler.update(1_121_000_000, 0x23A, bytes.fromhex("085c40e8ffe084ec")) is None
+
   def test_radar_kinematics_are_ready_for_radar_point_mapping(self):
     triplet = Classic238Triplet.from_frames(
       bytes.fromhex("0c797fdb8fe1f204"),
