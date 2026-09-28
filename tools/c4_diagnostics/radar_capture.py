@@ -17,11 +17,18 @@ DIAGNOSTIC_ADDRESSES = frozenset((0x7D0, 0x7D8))
 CLASSIC_TRACK_START = 0x238
 CLASSIC_TRACK_END = 0x255
 MAX_PENDING_DIAGNOSTICS = 256
+RADAR_BUS = 1
+# Other K7 radar-bus messages still being decoded: 0x202/0x203 carry a millisecond
+# counter, 0x25A-0x25E look like up to ten raw detections, the rest are unknown.
+RADAR_AUX_ADDRESSES = frozenset((*range(0x201, 0x20E), *range(0x25A, 0x25F), *range(0x266, 0x270), 0x690, 0x691))
 
 
-def is_radar_address(address: int) -> bool:
-  return (CLASSIC_TRACK_START <= address <= CLASSIC_TRACK_END or
-          0x500 <= address <= 0x53F or address in SCC_ADDRESSES or address in DIAGNOSTIC_ADDRESSES)
+def is_radar_address(address: int, source: int | None = None) -> bool:
+  # Radar-bus ranges are kept only from bus 1; on bus 0 the same IDs are unrelated
+  # powertrain frames (e.g. 0x240, MDPS12 0x251) that used to fill a quarter of each capture.
+  if CLASSIC_TRACK_START <= address <= CLASSIC_TRACK_END or address in RADAR_AUX_ADDRESSES:
+    return source is None or source == RADAR_BUS
+  return 0x500 <= address <= 0x53F or address in SCC_ADDRESSES or address in DIAGNOSTIC_ADDRESSES
 
 
 def capture_can_frame(writer, pending_diagnostics: deque, mono_time: int, address: int, source: int, data: bytes) -> None:
@@ -72,7 +79,7 @@ class RadarCaptureWriter:
     self.records = 0
 
   def append(self, mono_time: int, address: int, source: int, data: bytes) -> bool:
-    if not is_radar_address(address):
+    if not is_radar_address(address, source):
       return False
     record = encode_record(mono_time, address, source, data)
     self.stream.write(record)

@@ -76,6 +76,19 @@ class TestRadarCapture(unittest.TestCase):
         (125, 0x420, 0, b"scc-data"),
       ])
 
+  def test_radar_bus_ranges_are_kept_only_from_bus_1(self):
+    with tempfile.TemporaryDirectory() as temp_dir:
+      writer = RadarCaptureWriter(Path(temp_dir), wall_time=1000)
+      for address in (0x202, 0x25A, 0x26E, 0x690, 0x240):
+        self.assertTrue(writer.append(1, address, 1, b"radarbus"))
+      # Same IDs on bus 0 (e.g. 0x240, MDPS12 0x251) and their echoes are unrelated frames.
+      for address, source in ((0x240, 0), (0x251, 0), (0x251, 194), (0x25A, 0), (0x238, 130)):
+        self.assertFalse(writer.append(2, address, source, b"notradar"))
+      self.assertTrue(writer.append(3, 0x420, 128, b"scc-echo"))
+      capture = writer.finalize()
+      self.assertEqual([(address, source) for _, address, source, _ in iter_records(capture)],
+                       [(0x202, 1), (0x25A, 1), (0x26E, 1), (0x690, 1), (0x240, 1), (0x420, 128)])
+
   def test_empty_capture_is_removed(self):
     with tempfile.TemporaryDirectory() as temp_dir:
       writer = RadarCaptureWriter(Path(temp_dir), wall_time=1000)
