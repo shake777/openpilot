@@ -219,7 +219,7 @@ class TestClassic238LongitudinalSelection:
 
   @pytest.mark.parametrize("kwargs", (
     {"status": 1}, {"status": 6}, {"age_ns": 150_000_001},
-    {"status": 5}, {"distance": 2.9}, {"distance": 200.1}, {"lateral": 2.1}, {"lateral": -2.1},
+    {"status": 5}, {"distance": 9.9}, {"distance": 200.1}, {"lateral": 2.1}, {"lateral": -2.1},
     {"v_lead": -1.1},
   ))
   def test_unverified_stale_or_implausible_tracks_are_rejected(self, kwargs):
