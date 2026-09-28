@@ -199,7 +199,7 @@ While external navigation is connected, deceleration, countdowns, and navigation
 
 `MyDrivingMode` is `1` eco, `2` safe, `3` normal, or `4` high speed. High-speed mode ignores traffic-light control and increases acceleration tendency, so read its behavior before selecting it.
 
-Eco caps lead response at 2 and Safe at 3; Normal and High retain the selected value. Caps follow common/gap-specific selection and never raise lower choices or 0. Eco ×1.1 and Safe ×1.2 TF multipliers remain, with gradual release of mode allowance. Automatic selection uses Safe for stopping approaches and sustained slow following. Outside a stopping approach, lead acceleration above 1.5 m/s² for about 0.5 seconds restores Normal/Eco; otherwise, it requires six seconds of flow recovery or four seconds with no lead at 15 km/h or above.
+Eco caps lead response at 2 and Safe at 3; Normal and High retain the selected value. Caps follow common/gap-specific selection and never raise lower choices or 0. Eco ×1.1 and Safe ×1.2 TF multipliers remain, with gradual release of mode allowance. Automatic selection uses Safe for stopping approaches and sustained slow following. Outside a stopping approach, lead acceleration above 1.0 m/s² for about 0.5 seconds restores Normal/Eco; otherwise, it requires three seconds of flow recovery or four seconds with no lead at 15 km/h or above.
 
 `CruiseGapLevels` (Gap cycle levels) limits button cycling to 2 through the vehicle-supported maximum, which is the default. 2 uses TF1 and TF2; 3 uses TF1 through TF3. It applies on the next gap-button press and preserves unused TF and following responsiveness values. Applies with openpilot longitudinal control.
 
@@ -217,6 +217,8 @@ Deceleration preview operates independently of the response level. During active
 `StoppingAccel` is adjustable again: default `-50`, range `-100 to -50`, step `10`. The stored value is multiplied by 0.01, with the same bounds enforced by control. Original stop-entry and braking behavior and vehicle-specific soft hold are restored; changes apply within about one second. See [Stopping and restarting](cruise-gap.md#stop-resume).
 
 On non-release builds, Developer settings show the **alpha longitudinal** (`AlphaLongitudinalEnabled`) toggle even before vehicle parameters have been generated after a fresh installation. Once vehicle parameters are available, the toggle is hidden and its saved value is removed when the vehicle does not support alpha longitudinal control. Enabling it may disable stock AEB; confirm vehicle support and the actual control state during the next on-road cycle.
+
+`VEgoStopping` has a range of `10–100` and a default of `50`; `10` means `0.10 m/s`. Previously stored values below `10` are automatically raised to `10`, and control enforces the same minimum during driving.
 
 Hyundai/Kia CANFD with openpilot longitudinal control retains one stop retry by default after a confirmed speed rebound or sustained loss of deceleration. At low speed, elapsed time or distance alone does not trigger retry while deceleration continues. See [CANFD stopping control](cruise-gap.md#canfd-stopping).
 
