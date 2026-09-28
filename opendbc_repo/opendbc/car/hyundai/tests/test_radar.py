@@ -603,6 +603,26 @@ class TestK7Classic238RadarMode:
     assert not radar_data.errors.canError
     assert [point.trackId for point in radar_data.points] == [4001]
 
+  def test_mode5_drops_counter_mismatch_without_error(self, monkeypatch):
+    radar_interface = self.make_interface(monkeypatch)
+    radar_data = None
+    for index in range(5):
+      frames = self.scan(index % 4, {0: {}})
+      # A late first frame keeps the previous counter; its triplet must not be used.
+      frames[0] = (0x238, self.triplet((index + 1) % 4)[0], 1)
+      updated = radar_interface.update([1_000_000_000 + index * self.SCAN_NS, frames])
+      if updated is not None:
+        radar_data = updated
+    assert not radar_data.errors.canError
+    assert not radar_data.points
+
+  def test_mode5_keeps_track_id_across_slot_move(self, monkeypatch):
+    radar_interface = self.make_interface(monkeypatch)
+    assert [p.trackId for p in self.publish(radar_interface, 1_000_000_000, {0: {}}).points] == [4000]
+    radar_data = self.publish(radar_interface, 1_150_000_000, {3: {"d_rel": 20.1}})
+    assert not radar_data.errors.canError
+    assert [p.trackId for p in radar_data.points] == [4000]
+
   def test_mode5_without_classic_detection_behaves_like_mode0(self, monkeypatch):
     radar_interface = self.make_interface(monkeypatch, classic_flag=False)
     assert not radar_interface.classic_238
