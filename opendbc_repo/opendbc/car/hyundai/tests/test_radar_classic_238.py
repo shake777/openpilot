@@ -232,3 +232,52 @@ class TestClassic238LongitudinalSelection:
     assert not classic_238_radar_available({**fingerprint, CLASSIC_238_END_ADDR: 7})
     del fingerprint[0x247]
     assert not classic_238_radar_available(fingerprint)
+
+
+class TestClassic238ObjectIdAssociation:
+  @staticmethod
+  def observation(object_id, distance, lateral=0.0, slot=0, v_lead=8.0):
+    kinematics = Classic238RadarKinematics(d_rel=distance, y_rel=lateral, v_rel=0.0, v_lead=v_lead,
+                                           a_rel=float("nan"), yv_rel=0.0)
+    return Classic238TrackObservation(slot=slot, status=2, object_sequence=0, kinematics=kinematics,
+                                      object_id=object_id)
+
+  def test_triplet_object_id_requires_matching_mirror(self):
+    first, third = bytes.fromhex("0c797fdb8fe1f204"), bytes.fromhex("085c40e8ffe084ec")
+    assert Classic238Triplet.from_frames(first, bytes.fromhex("0f9d774945c80002"), third).object_id == 2
+    assert Classic238Triplet.from_frames(first, bytes.fromhex("0f9d774945c80003"), third).object_id is None
+
+  def test_object_id_keeps_identity_when_positions_cross(self):
+    tracker = Classic238AssociationTracker()
+    tracker.update_scan(0, [self.observation(10, 20.0, slot=0), self.observation(11, 21.5, 0.3, slot=1)])
+    ids = {track.object_id: track.track_id for track in tracker.current(0)}
+    # Position alone would swap the two tracks; the matching IDs keep them.
+    tracks = tracker.update_scan(30_000_000, [self.observation(10, 21.2, 0.2, slot=1), self.observation(11, 20.2, 0.1, slot=0)])
+    assert {track.object_id: track.track_id for track in tracks} == ids
+
+  def test_same_object_id_with_physical_jump_starts_new_track(self):
+    tracker = Classic238AssociationTracker()
+    first = tracker.update_scan(0, [self.observation(10, 20.0)])[0].track_id
+    tracks = tracker.update_scan(30_000_000, [self.observation(10, 45.0)])
+    assert [track.track_id for track in tracks if track.last_seen_ns == 30_000_000] != [first]
+
+  def test_unknown_object_id_falls_back_to_position(self):
+    tracker = Classic238AssociationTracker()
+    first = tracker.update_scan(0, [self.observation(None, 20.0)])[0].track_id
+    tracks = tracker.update_scan(30_000_000, [self.observation(None, 20.3)])
+    assert [track.track_id for track in tracks] == [first]
+
+  def test_same_object_id_resumes_track_after_short_gap(self):
+    tracker = Classic238AssociationTracker()
+    first = tracker.update_scan(0, [self.observation(10, 20.0)])[0].track_id
+    assert tracker.current(200_000_000) == []
+    tracks = tracker.update_scan(250_000_000, [self.observation(10, 20.4)])
+    assert [track.track_id for track in tracks] == [first]
+
+  def test_gap_resume_rejects_other_id_long_gap_and_missing_id(self):
+    for object_id, resume_ns, first_id in ((11, 250_000_000, 10), (10, 400_000_000, 10), (None, 250_000_000, None)):
+      tracker = Classic238AssociationTracker()
+      first = tracker.update_scan(0, [self.observation(first_id, 20.0)])[0].track_id
+      tracker.current(200_000_000)
+      tracks = tracker.update_scan(resume_ns, [self.observation(object_id, 20.4)])
+      assert [track.track_id for track in tracks] != [first]

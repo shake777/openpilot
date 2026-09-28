@@ -13,6 +13,13 @@ CLASSIC_238_MAX_TRIPLET_SPREAD_NS = 30_000_000
 CLASSIC_238_MAX_D_REL_DELTA_M = 3.0
 CLASSIC_238_MAX_Y_REL_DELTA_M = 1.5
 CLASSIC_238_MAX_V_LEAD_DELTA_MS = 5.0
+# The radar's 6-bit object ID is reused often (all 64 values within ~45 s at an
+# intersection), so it only biases association; the physical gates still decide.
+CLASSIC_238_SAME_ID_BONUS = 1.0
+CLASSIC_238_OTHER_ID_PENALTY = 1.0
+# A dropped track may be resumed only by the same ID within this gap and the same
+# physical gates; longer gaps are treated as ID reuse by another object.
+CLASSIC_238_ID_REACQUIRE_NS = 300_000_000
 
 
 @dataclass(frozen=True)
@@ -47,6 +54,12 @@ class Classic238Triplet:
   @property
   def counter_consistent(self) -> bool:
     return len(set(self.rolling_counters)) == 1
+
+  @property
+  def object_id(self) -> int | None:
+    # 0x238 bits 1-6 are mirrored in 0x239 bits 0-5; use the ID only when both agree.
+    object_id = (self.obj.raw >> 1) & 0x3F
+    return object_id if (self.second_frame[7] & 0x3F) == object_id else None
 
   @classmethod
   def from_frames(cls, first: bytes, second: bytes, third: bytes) -> "Classic238Triplet":
@@ -91,6 +104,7 @@ class Classic238DisplayTrack:
   object_sequence: int
   kinematics: Classic238RadarKinematics
   last_seen_ns: int
+  object_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -99,6 +113,7 @@ class Classic238TrackObservation:
   status: int
   object_sequence: int
   kinematics: Classic238RadarKinematics
+  object_id: int | None = None
 
 
 class Classic238AssociationTracker:
@@ -106,6 +121,7 @@ class Classic238AssociationTracker:
     self.max_age_ns = max_age_ns
     self.next_track_id = 0
     self.tracks: dict[int, Classic238DisplayTrack] = {}
+    self.lost: dict[int, Classic238DisplayTrack] = {}
 
   @staticmethod
   def _association_cost(track: Classic238DisplayTrack, observation: Classic238TrackObservation,
@@ -120,10 +136,13 @@ class Classic238AssociationTracker:
         or v_delta > CLASSIC_238_MAX_V_LEAD_DELTA_MS):
       return None
     slot_penalty = 0.0 if observation.slot == track.slot else 0.2
+    id_term = 0.0
+    if track.object_id is not None and observation.object_id is not None:
+      id_term = -CLASSIC_238_SAME_ID_BONUS if track.object_id == observation.object_id else CLASSIC_238_OTHER_ID_PENALTY
     return (d_delta / CLASSIC_238_MAX_D_REL_DELTA_M
             + y_delta / CLASSIC_238_MAX_Y_REL_DELTA_M
             + v_delta / CLASSIC_238_MAX_V_LEAD_DELTA_MS
-            + slot_penalty)
+            + slot_penalty + id_term)
 
   def update_scan(self, mono_time_ns: int,
                   observations: list[Classic238TrackObservation]) -> list[Classic238DisplayTrack]:
@@ -144,7 +163,7 @@ class Classic238AssociationTracker:
       self.tracks[track_id] = Classic238DisplayTrack(
         track_id=track_id, slot=observation.slot, status=observation.status,
         object_sequence=observation.object_sequence, kinematics=observation.kinematics,
-        last_seen_ns=mono_time_ns,
+        last_seen_ns=mono_time_ns, object_id=observation.object_id,
       )
       assigned_tracks.add(track_id)
       assigned_observations.add(index)
@@ -152,20 +171,38 @@ class Classic238AssociationTracker:
     for index, observation in enumerate(observations):
       if index in assigned_observations:
         continue
-      track_id = self.next_track_id
-      self.next_track_id += 1
+      track_id = self._reacquire(observation, mono_time_ns)
+      if track_id is None:
+        track_id = self.next_track_id
+        self.next_track_id += 1
       self.tracks[track_id] = Classic238DisplayTrack(
         track_id=track_id, slot=observation.slot, status=observation.status,
         object_sequence=observation.object_sequence, kinematics=observation.kinematics,
-        last_seen_ns=mono_time_ns,
+        last_seen_ns=mono_time_ns, object_id=observation.object_id,
       )
     return self.current(mono_time_ns)
+
+  def _reacquire(self, observation: Classic238TrackObservation, mono_time_ns: int) -> int | None:
+    if observation.object_id is None:
+      return None
+    candidates = [(cost, track_id) for track_id, track in self.lost.items()
+                  if track.object_id == observation.object_id
+                  and (cost := self._association_cost(track, observation, mono_time_ns)) is not None]
+    if not candidates:
+      return None
+    track_id = min(candidates)[1]
+    del self.lost[track_id]
+    return track_id
 
   def current(self, mono_time_ns: int) -> list[Classic238DisplayTrack]:
     stale_ids = [track_id for track_id, track in self.tracks.items()
                  if mono_time_ns - track.last_seen_ns > self.max_age_ns]
     for track_id in stale_ids:
-      del self.tracks[track_id]
+      track = self.tracks.pop(track_id)
+      if track.object_id is not None:
+        self.lost[track_id] = track
+    self.lost = {track_id: track for track_id, track in self.lost.items()
+                 if mono_time_ns - track.last_seen_ns <= CLASSIC_238_ID_REACQUIRE_NS}
     return [self.tracks[track_id] for track_id in sorted(self.tracks)]
 
 
@@ -201,6 +238,7 @@ class Classic238DisplayTracker:
       self.pending[slot] = Classic238TrackObservation(
         slot=slot, status=triplet.obj.status, object_sequence=triplet.object_sequence,
         kinematics=Classic238RadarKinematics.from_triplet(triplet, v_ego),
+        object_id=triplet.object_id,
       )
     if slot == CLASSIC_238_SLOT_COUNT - 1:
       self._flush(mono_time_ns)
