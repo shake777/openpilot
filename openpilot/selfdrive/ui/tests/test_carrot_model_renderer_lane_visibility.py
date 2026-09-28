@@ -140,6 +140,33 @@ def model_renderer_module(monkeypatch):
   return module
 
 
+@pytest.mark.parametrize(('is_metric', 'expected'), [(True, '7m'), (False, '23ft')])
+def test_classic_radar_label_shows_only_distance(model_renderer_module, monkeypatch, is_metric, expected):
+  module = model_renderer_module
+  module.ui_state.is_metric = is_metric
+  renderer = object.__new__(module.ModelRenderer)
+  renderer._get_path_length_idx = lambda *_args: 0
+  renderer._map_to_screen = lambda *_args: (100, 100)
+  lines = SimpleNamespace(x=[0.0], z=[0.0])
+  point = SimpleNamespace(dRel=7.0, yRel=0.3, trackState=2)
+
+  class Messages(dict):
+    valid = {'classicRadarTracks': True, 'modelV2': True}
+
+  messages = Messages(classicRadarTracks=SimpleNamespace(points=[point]),
+                      modelV2=SimpleNamespace(laneLines=[None, None, lines]))
+  labels = []
+  markers = []
+  monkeypatch.setattr(module, 'draw_text_ui_style', lambda *args, **kwargs: labels.append(args[0]))
+  monkeypatch.setattr(module.rl, 'draw_circle', lambda *args: markers.append(args))
+
+  renderer._draw_classic_radar_tracks_carrot(messages)
+
+  assert labels == [expected]
+  assert len(markers) == 1
+  assert markers[0][3] == module.rl.Color(53, 224, 193, 230)
+
+
 def test_lane_draw_skips_zero_alpha_projection(model_renderer_module, monkeypatch):
   module = model_renderer_module
   renderer = object.__new__(module.ModelRenderer)
