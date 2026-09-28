@@ -140,15 +140,13 @@ def model_renderer_module(monkeypatch):
   return module
 
 
-@pytest.mark.parametrize(('is_metric', 'expected'), [(True, '7m'), (False, '23ft')])
-def test_classic_radar_label_shows_only_distance(model_renderer_module, monkeypatch, is_metric, expected):
+def test_classic_radar_label_shows_only_track_id(model_renderer_module, monkeypatch):
   module = model_renderer_module
-  module.ui_state.is_metric = is_metric
   renderer = object.__new__(module.ModelRenderer)
   renderer._get_path_length_idx = lambda *_args: 0
   renderer._map_to_screen = lambda *_args: (100, 100)
   lines = SimpleNamespace(x=[0.0], z=[0.0])
-  point = SimpleNamespace(dRel=7.0, yRel=0.3, trackState=2)
+  point = SimpleNamespace(dRel=7.0, yRel=0.3, trackState=2, trackId=42)
 
   class Messages(dict):
     valid = {'classicRadarTracks': True, 'modelV2': True}
@@ -162,7 +160,7 @@ def test_classic_radar_label_shows_only_distance(model_renderer_module, monkeypa
 
   renderer._draw_classic_radar_tracks_carrot(messages)
 
-  assert labels == [expected]
+  assert labels == ['42']
   assert len(markers) == 1
   assert markers[0][3] == module.rl.Color(53, 224, 193, 230)
 

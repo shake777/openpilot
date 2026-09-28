@@ -1210,9 +1210,7 @@ class ModelRenderer(Widget):
       confirmed = int(point.trackState) == 2
       color = rl.Color(53, 224, 193, 230) if confirmed else rl.Color(125, 135, 146, 230)
       rl.draw_circle(x, y, 9.0, color)
-      distance = d_rel if ui_state.is_metric else d_rel * 3.28084
-      unit = "m" if ui_state.is_metric else "ft"
-      draw_text_ui_style(f"{distance:.0f}{unit}", x, y - 24, 26,
+      draw_text_ui_style(str(int(point.trackId)), x, y - 24, 26,
                          rl.Color(255, 255, 255, 230), align="center", y_offset=0.0)
 
 
