@@ -288,10 +288,10 @@ def classic_238_address_role(address: int) -> tuple[int, int]:
 # It performs no ECU write and does not require legacy 0x500 tracks.
 RADAR_TRACK_MODE_CLASSIC_238 = 5
 CLASSIC_238_LONGITUDINAL_STATUS = 2
-# Near stopped leads (<8 m by vision) read 1.4-2.7 m farther on radar than vision in
-# K7 tests, while following at 6-20 m agreed within 0.6 m. Below 10 m vision, which
-# reports the shorter gap, keeps the lead; this is the conservative choice.
-CLASSIC_238_MIN_D_REL_M = 10.0
+# A 10 m minimum was tried after one low-speed test read near stopped leads ~2 m
+# farther than vision. A 70-minute engaged drive with near radar leads agreed with
+# vision within 0.5 m below 10 m (stopped and moving) and held steadier stop gaps.
+CLASSIC_238_MIN_D_REL_M = 3.0
 CLASSIC_238_MAX_D_REL_M = 200.0
 CLASSIC_238_MAX_ABS_Y_REL_M = 2.0
 # Oncoming and turning traffic at intersections reports negative ground speed.
