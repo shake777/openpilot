@@ -5,6 +5,7 @@ from opendbc.car.hyundai.radar_classic_238 import (
   CLASSIC_238_END_ADDR,
   CLASSIC_238_START_ADDR,
   Classic238AssociationTracker,
+  Classic238DisplayTrack,
   Classic238Assembler,
   Classic238DisplayTracker,
   Classic238Object,
@@ -12,6 +13,8 @@ from opendbc.car.hyundai.radar_classic_238 import (
   Classic238TrackObservation,
   Classic238Triplet,
   classic_238_address_role,
+  classic_238_longitudinal_tracks,
+  classic_238_radar_available,
 )
 
 
@@ -183,3 +186,33 @@ class TestClassic238ObjectDecoder:
     tracker.update_scan(1_000_000_000, [first])
     tracks = tracker.update_scan(1_050_000_000, [distant])
     assert {track.track_id for track in tracks} == {0, 1}
+
+
+class TestClassic238LongitudinalSelection:
+  @staticmethod
+  def track(status=2, distance=12.0, lateral=0.5, age_ns=0, v_lead=8.0):
+    kinematics = Classic238RadarKinematics(d_rel=distance, y_rel=lateral, v_rel=-2.0, v_lead=v_lead,
+                                           a_rel=float("nan"), yv_rel=0.0)
+    return Classic238DisplayTrack(track_id=3, slot=0, status=status, object_sequence=0,
+                                  kinematics=kinematics, last_seen_ns=1_000_000_000 - age_ns)
+
+  @pytest.mark.parametrize("v_lead", (8.0, 0.0, -1.0))
+  def test_fresh_confirmed_track_near_ego_lane_is_selected(self, v_lead):
+    track = self.track(v_lead=v_lead)
+    assert classic_238_longitudinal_tracks([track], 1_000_000_000) == [track]
+
+  @pytest.mark.parametrize("kwargs", (
+    {"status": 1}, {"status": 6}, {"age_ns": 150_000_001},
+    {"status": 5}, {"distance": 2.9}, {"distance": 200.1}, {"lateral": 2.1}, {"lateral": -2.1},
+    {"v_lead": -1.1},
+  ))
+  def test_unverified_stale_or_implausible_tracks_are_rejected(self, kwargs):
+    assert classic_238_longitudinal_tracks([self.track(**kwargs)], 1_000_000_000) == []
+
+  def test_stream_detection_requires_all_triplets_without_legacy_tracks(self):
+    fingerprint = {addr: 8 for addr in range(CLASSIC_238_START_ADDR, CLASSIC_238_END_ADDR + 1)}
+    assert classic_238_radar_available(fingerprint)
+    assert not classic_238_radar_available({**fingerprint, 0x500: 8})
+    assert not classic_238_radar_available({**fingerprint, CLASSIC_238_END_ADDR: 7})
+    del fingerprint[0x247]
+    assert not classic_238_radar_available(fingerprint)

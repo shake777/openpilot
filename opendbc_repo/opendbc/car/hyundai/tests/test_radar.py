@@ -505,3 +505,112 @@ class TestCornerRadar430CandidateFilter:
 
     assert 300 not in points
     assert all(str(point.radarSource) != "corner430" for point in points.values())
+
+
+class TestK7Classic238RadarMode:
+  SCAN_NS = 30_000_000
+
+  @staticmethod
+  def make_interface(monkeypatch, mode=5, classic_flag=True, car=CAR.KIA_K7_PE):
+    class FakeParams:
+      def get_int(self, key):
+        return mode if key == "EnableRadarTracks" else 0
+
+    monkeypatch.setattr(radar_interface_module, "Params", FakeParams)
+    cp = structs.CarParams()
+    cp.carFingerprint = car
+    cp.flags = 0
+    cp.extFlags = HyundaiExtFlags.RADAR_CLASSIC_238.value if classic_flag else 0
+    cp.radarUnavailable = False
+    cp.safetyConfigs = [structs.CarParams.SafetyConfig()]
+    return RadarInterface(cp)
+
+  @staticmethod
+  def triplet(counter, status=2, d_rel=20.0, y_rel=0.5, v_lead=8.0):
+    raw = (round(d_rel / 0.05) << 51 | status << 48 | round((-y_rel + 102.4) / 0.05) << 36 |
+           round((v_lead + 100.0) / 0.05) << 20 | counter << 18)
+    return raw.to_bytes(8, "big"), bytes([counter << 6]) + bytes(7), bytes([counter << 6, 0, 0, 7]) + bytes(4)
+
+  def scan(self, counter, objects):
+    frames = []
+    for slot in range(10):
+      payloads = self.triplet(counter, **objects[slot]) if slot in objects else self.triplet(counter, status=0)
+      frames += [(0x238 + slot * 3 + role, payload, 1) for role, payload in enumerate(payloads)]
+    return frames
+
+  def publish(self, radar_interface, start_ns, objects, scans=5):
+    radar_data = None
+    for index in range(scans):
+      ns = start_ns + index * self.SCAN_NS
+      updated = radar_interface.update([ns, self.scan((ns // self.SCAN_NS) % 4, objects)])
+      if updated is not None:
+        radar_data = updated
+    return radar_data
+
+  def test_mode5_uses_classic_stream_without_legacy_or_scc_parsers(self, monkeypatch):
+    radar_interface = self.make_interface(monkeypatch)
+    assert radar_interface.classic_238
+    assert radar_interface.radar_tracks
+    assert radar_interface.rcp_tracks is None
+    assert radar_interface.rcp_scc is None
+    assert not radar_interface.radar_off_can
+
+    radar_data = self.publish(radar_interface, 1_000_000_000, {0: {}, 1: {"status": 1, "d_rel": 30.0}})
+    assert radar_data is not None
+    assert not radar_data.errors.canError
+    assert len(radar_data.points) == 1
+    point = radar_data.points[0]
+    assert point.trackId == 4000
+    assert point.radarSource == "frontRadar"
+    assert point.measured
+    assert point.dRel == pytest.approx(20.0)
+    assert point.yRel == pytest.approx(0.5)
+    assert point.vLead == pytest.approx(8.0)
+    assert point.vRel == pytest.approx(8.0)
+
+  def test_mode5_publishes_at_20hz_cadence(self, monkeypatch):
+    radar_interface = self.make_interface(monkeypatch)
+    published = [radar_interface.update([1_000_000_000 + index * self.SCAN_NS, self.scan(index % 4, {0: {}})])
+                 for index in range(10)]
+    assert [index for index, radar_data in enumerate(published) if radar_data is not None] == [4, 9]
+
+  def test_mode5_reports_stale_stream_and_drops_points(self, monkeypatch):
+    radar_interface = self.make_interface(monkeypatch)
+    assert self.publish(radar_interface, 1_000_000_000, {0: {}}).points
+
+    radar_data = None
+    for index in range(5):
+      updated = radar_interface.update([1_400_000_000 + index * self.SCAN_NS, [(0x251, bytes(8), 0)]])
+      if updated is not None:
+        radar_data = updated
+    assert radar_data.errors.canError
+    assert not radar_data.points
+
+  def test_mode5_rejects_malformed_frame_and_restarts_with_new_track_id(self, monkeypatch):
+    radar_interface = self.make_interface(monkeypatch)
+    assert self.publish(radar_interface, 1_000_000_000, {0: {}}).points[0].trackId == 4000
+
+    radar_data = None
+    for index in range(5):
+      frames = [(0x238, bytes(7), 1)] if index == 0 else self.scan(index % 4, {0: {}})
+      updated = radar_interface.update([1_150_000_000 + index * self.SCAN_NS, frames])
+      if updated is not None:
+        radar_data = updated
+    assert radar_data.errors.canError
+    assert not radar_data.points
+
+    radar_data = self.publish(radar_interface, 1_300_000_000, {0: {}})
+    assert not radar_data.errors.canError
+    assert [point.trackId for point in radar_data.points] == [4001]
+
+  def test_mode5_without_classic_detection_behaves_like_mode0(self, monkeypatch):
+    radar_interface = self.make_interface(monkeypatch, classic_flag=False)
+    assert not radar_interface.classic_238
+    assert not radar_interface.radar_tracks
+    assert radar_interface.rcp_tracks is None
+    assert radar_interface.rcp_scc is not None
+
+  def test_existing_mode1_keeps_legacy_parser(self, monkeypatch):
+    radar_interface = self.make_interface(monkeypatch, mode=1, classic_flag=True)
+    assert not radar_interface.classic_238
+    assert radar_interface.rcp_tracks is not None

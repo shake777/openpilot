@@ -24,12 +24,17 @@ A radar fitted to the vehicle does not guarantee that carrotpilot can read the r
 | `2` | Match front-radar tracks and low-speed SCC to vision; use vision if matching fails | Test only on an identical validated configuration |
 | `3` | Match front radar to vision first; if it fails, always use SCC, then vision if SCC is absent | Experimental; false detections are possible |
 | `4` | Read pre-enabled raw front-radar tracks while retaining stock longitudinal control | Activation-result observation only |
+| `5` | Match K7 2020 (`KIA_K7_PE`) front-radar objects at `0x238–0x255` to vision without SCC; use vision if matching fails | K7 2020-only experiment |
 
-On non-CAN FD Hyundai/Kia vehicles, a positive value attempts to enable radar tracks during startup and stores the result in `EnableRadarTracksResult`. Confirm both the activation result and actual incoming tracks; physical radar presence alone is not enough.
+On non-CAN FD Hyundai/Kia vehicles, values `1` through `3` attempt to enable radar tracks during startup and store the result in `EnableRadarTracksResult`. Confirm both the activation result and actual incoming tracks; physical radar presence alone is not enough.
 
 Unlike positive modes, `-1` does not change the ECU diagnostic session or radar configuration and does not automatically enable openpilot longitudinal control. It keeps stock SCC/AEB and only reads the single SCC11 lead range, relative speed, and lateral position.
 
 `4` sends no ECU activation command and does not enable openpilot longitudinal control. It only checks whether pre-enabled raw `0x500–0x53F` tracks are actually received after a separate stationary test.
+
+`5` reads the `0x238–0x255` objects (10 slots × 3 frames) that the K7 2020 already transmits on bus 1. It is selected only when all 30 addresses are received at startup and no `0x500` tracks exist; on other vehicles or when these conditions are not met, it behaves like `0`. It performs no ECU diagnostic or configuration write and does not force openpilot longitudinal control, so longitudinal control follows the existing alpha longitudinal setting. For lead selection it behaves like `1`, matching only front radar to vision without SCC.
+
+Mode `5` candidates are complete triplets with consistent rolling counters and status `2`, range `3–200 m`, lateral position within `±2.0 m`, and ground speed of at least `-1.0 m/s`. Approaching objects such as oncoming or crossing traffic, and other status values whose meaning is not yet confirmed, are excluded. Objects arrive at about 33 Hz but are published at the existing 20 Hz radar rate. A reception gap longer than 0.15 seconds or a malformed frame reports a CAN error for that cycle and clears the candidates; tracking then resumes with new object IDs. Near-range misses and a wider range of driving scenes have not been validated, so keep the default `0` and test only on a confirmed vehicle.
 
 Legacy Mando front radars use the base 32 slots at `0x500–0x51F` for timing and CAN validity, and automatically consume the additional 32 slots at `0x520–0x53F` when the vehicle transmits them. The upper bank is optional, so it does not delay publication or invalidate CAN on a 32-slot vehicle; an upper-bank slot that stops arriving is removed on the next radar cycle.
 

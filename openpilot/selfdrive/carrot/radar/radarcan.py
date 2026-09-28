@@ -12,30 +12,11 @@ from openpilot.selfdrive.carrot.radar.can_batch import MAX_INPUT_AGE_NS, RadarCa
 from openpilot.selfdrive.carrot.radar.lateral import set_radar_track_flip
 from openpilot.selfdrive.pandad import can_capnp_to_list
 from opendbc.car.car_helpers import interfaces
-from opendbc.car import structs
 from opendbc.car.hyundai.radar_classic_238 import (
   CLASSIC_238_END_ADDR,
   CLASSIC_238_START_ADDR,
   Classic238DisplayTracker,
 )
-from opendbc.car.hyundai.values import CAR
-
-
-def k7_classic_longitudinal_points(tracks, now_ns):
-  # status 1/6 and lateral sign remain unverified; only fresh status-2 tracks are candidates.
-  points = []
-  for track in tracks:
-    kinematics = track.kinematics
-    if (track.status != 2 or now_ns - track.last_seen_ns > 150_000_000
-        or not 3.0 <= kinematics.d_rel <= 200.0 or abs(kinematics.y_rel) > 2.0):
-      continue
-    point = structs.RadarData.RadarPoint()
-    point.trackId = 4000 + track.track_id
-    point.dRel, point.yRel, point.vRel = kinematics.d_rel, kinematics.y_rel, kinematics.v_rel
-    point.aRel, point.yvRel, point.vLead = kinematics.a_rel, kinematics.yv_rel, kinematics.v_lead
-    point.measured, point.radarSource, point.trackState = True, 'frontRadar', track.status
-    points.append(point)
-  return points
 
 
 def main():
@@ -52,9 +33,6 @@ def main():
   # Latch once per onroad start; never change a track's side during a drive.
   radar_track_flip = Params().get_bool('RadarTrackFlip')
   classic_tracker = Classic238DisplayTracker() if CP.brand == 'hyundai' else None
-  # Experimental internal gate only. Never reuse EnableRadarTracks: it can reconfigure the radar ECU.
-  k7_classic_longitudinal = (CP.carFingerprint == CAR.KIA_K7_PE and
-                             os.environ.get('K7_CLASSIC_RADAR_LONGITUDINAL') == '1')
   batches = RadarCanBatches()
   diagnostics = RuntimeDiagnostics('radarcan', cloudlog.event)
   last_input_ns = time.monotonic_ns()
@@ -151,9 +129,6 @@ def main():
         publish_error('processingTimeout', now())
         continue
       if result is not None:
-        if (k7_classic_longitudinal and classic_tracker is not None and not result.points
-            and not any(result.errors.to_dict().values())):
-          result.points = k7_classic_longitudinal_points(classic_tracker.current(ego.receive_ns), ego.receive_ns)
         msg = messaging.new_message('liveTracks')
         msg.valid = not any(result.errors.to_dict().values())
         msg.liveTracks = result

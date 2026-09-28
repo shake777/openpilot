@@ -6,7 +6,7 @@
 
 - 제공된 약 43.6초 주차장 저속 캡처에서 bus 1의 0x238–0x255 10개 슬롯 × 3개 프레임이 약 33 Hz로 수신되었다. 완성된 트리플렛 14,536개의 롤링 카운터 불일치는 0건이었다.
 - 거리 스케일 0.05 m와 대지 속도 해석은 거리 변화와 대체로 일치한다. 그러나 회전·슬롯 재할당이 섞인 속도 잔차는 넓고, 횡위치 부호는 직진 추종 장면으로 검증하지 못했다.
-- 원래 `classicRadarTracks`에는 표시용 객체가 들어가지만 `liveTracks` 및 종방향 선행차 선택에는 연결되지 않았다. 이번 후보 코드는 `KIA_K7_PE`에서만 별도 내부 환경 변수 `K7_CLASSIC_RADAR_LONGITUDINAL=1`을 켰을 때, 기존 레이더 포인트가 없고 오류가 없으면 status 2의 신선한 객체를 `liveTracks`에 더한다. 변수 미설정이 기본값이며 동작은 종전과 같다.
+- 원래 `classicRadarTracks`에는 표시용 객체가 들어가지만 `liveTracks` 및 종방향 선행차 선택에는 연결되지 않았다. 처음의 내부 환경 변수 후보 경로는 제거했고, 현재는 `EnableRadarTracks=5`가 `RadarInterface`에서 같은 조건의 객체를 `liveTracks`로 발행한다. 구현과 검증 결과는 `docs/k7_classic_238_enable_radar_tracks_mode5_proposal.md`에 기록한다.
 - status 1과 6의 의미는 확인되지 않아 종방향 후보에서 제외한다. `EnableRadarTracks`는 레이더 ECU 설정 변경 경로와 연결되어 있으므로 이 시험의 스위치로 쓰지 않는다.
 
 ## 아직 막힌 검증

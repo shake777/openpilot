@@ -50,6 +50,16 @@ def test_hyundai_keeps_configured_radar_track_mode(configured_mode: int) -> None
   ) == configured_mode
 
 
+@pytest.mark.parametrize("classic_238, expected", ((True, 1), (False, 0)))
+def test_hyundai_classic_238_mode_uses_front_radar_only_when_selected(
+  classic_238: bool,
+  expected: int,
+) -> None:
+  assert effective_radar_track_mode(
+    "hyundai", False, 5, classic_238=classic_238,
+  ) == expected
+
+
 @pytest.mark.parametrize(
   "brand", ("volkswagen", "honda", "toyota", "ford", "subaru"),
 )
