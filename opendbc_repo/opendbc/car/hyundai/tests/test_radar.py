@@ -511,7 +511,7 @@ class TestK7Classic238RadarMode:
   SCAN_NS = 30_000_000
 
   @staticmethod
-  def make_interface(monkeypatch, mode=5, classic_flag=True, car=CAR.KIA_K7_PE):
+  def make_interface(monkeypatch, mode=5, classic_flag=True, car=CAR.KIA_K7_PE, flags=0):
     class FakeParams:
       def get_int(self, key):
         return mode if key == "EnableRadarTracks" else 0
@@ -519,7 +519,7 @@ class TestK7Classic238RadarMode:
     monkeypatch.setattr(radar_interface_module, "Params", FakeParams)
     cp = structs.CarParams()
     cp.carFingerprint = car
-    cp.flags = 0
+    cp.flags = flags
     cp.extFlags = HyundaiExtFlags.RADAR_CLASSIC_238.value if classic_flag else 0
     cp.radarUnavailable = False
     cp.safetyConfigs = [structs.CarParams.SafetyConfig()]
@@ -622,6 +622,22 @@ class TestK7Classic238RadarMode:
     radar_data = self.publish(radar_interface, 1_150_000_000, {3: {"d_rel": 20.1}})
     assert not radar_data.errors.canError
     assert [p.trackId for p in radar_data.points] == [4000]
+
+  def test_mode5_keeps_stock_scc_point_with_camera_scc_wiring(self, monkeypatch):
+    # Radar wired behind the C4 (HyundaiCameraSCC): SCC11 arrives on bus 2 next to the 0x238 stream.
+    radar_interface = self.make_interface(monkeypatch, flags=HyundaiFlags.CAMERA_SCC.value)
+    assert radar_interface.classic_238 and radar_interface.rcp_scc is not None
+    packer = CANPacker(radar_interface_module.DBC[CAR.KIA_K7_PE][Bus.pt])
+    scc11 = packer.make_can_msg("SCC11", 2, {"ACC_ObjStatus": 1, "ACC_ObjDist": 20.0, "ACC_ObjRelSpd": 0.0})
+    published = []
+    for index in range(15):
+      frames = self.scan(index % 4, {0: {}}) + [scc11]
+      updated = radar_interface.update([1_000_000_000 + index * self.SCAN_NS, frames])
+      if updated is not None:
+        published.append(updated)
+    assert len(published) == 3
+    track_ids = {point.trackId for point in published[-1].points}
+    assert 4000 in track_ids and 0 in track_ids
 
   def test_mode5_without_classic_detection_behaves_like_mode0(self, monkeypatch):
     radar_interface = self.make_interface(monkeypatch, classic_flag=False)

@@ -536,7 +536,10 @@ class RadarInterface(RadarInterfaceBase):
     stale = now_ns - reference_ns > CLASSIC_238_MAX_TRIPLET_AGE_NS
     valid = not (stale or self.classic_238_invalid)
     self.classic_238_invalid = False
-    self.pts = {}
+    # Replace only this stream's points: with HyundaiCameraSCC the stock SCC11 point
+    # (SCC_TID) lives in the same dict and is updated in place every cycle.
+    for track_id in [track_id for track_id in self.pts if track_id >= CLASSIC_238_TRACK_ID_OFFSET]:
+      del self.pts[track_id]
     if not valid:
       return False
     tracks = classic_238_longitudinal_tracks(self.classic_238_tracker.current(now_ns), now_ns)
