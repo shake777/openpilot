@@ -17,7 +17,6 @@ from tools.c4_diagnostics.qcamera_capture import (
   QCameraCaptureWriter,
   next_representative_video_time,
   representative_video_due,
-  representative_video_rollover_due,
 )
 from tools.c4_diagnostics.radar_capture import MAX_PENDING_DIAGNOSTICS, RadarCaptureWriter, capture_can_frame
 from tools.c4_diagnostics.scene_capture import SceneCaptureWriter, build_scene_frame
@@ -156,23 +155,14 @@ def main() -> None:
       if not onroad:
         next_video_time = None
       elif next_video_time is None:
-        next_video_time = next_representative_video_time(monotonic_now)
-      if (onroad and writer is not None and scene_writer is not None and inventory_writer is not None and
-          representative_video_rollover_due(monotonic_now, next_video_time, video_writer is not None)):
-        finalize_capture(writer, scene_writer, inventory_writer, video_writer)
-        writer = None
-        scene_writer = None
-        inventory_writer = None
-        video_writer = None
-      if onroad and writer is None:
+        # First bundle at the start of each drive, then one every 10 minutes.
+        next_video_time = monotonic_now
+      if onroad and writer is None and representative_video_due(monotonic_now, next_video_time):
         writer = RadarCaptureWriter(spool_dir)
         scene_writer = SceneCaptureWriter(spool_dir, writer.capture_name, writer.started_at)
         inventory_writer = CanInventoryWriter(spool_dir, writer.capture_name)
-        if representative_video_due(monotonic_now, next_video_time):
-          video_writer = QCameraCaptureWriter(spool_dir, writer.capture_name)
-          next_video_time = next_representative_video_time(monotonic_now)
-        else:
-          video_writer = None
+        video_writer = QCameraCaptureWriter(spool_dir, writer.capture_name)
+        next_video_time = next_representative_video_time(monotonic_now)
         next_scene_time = monotonic_now
       elif not onroad and writer is not None and scene_writer is not None and inventory_writer is not None:
         finalize_capture(writer, scene_writer, inventory_writer, video_writer)
