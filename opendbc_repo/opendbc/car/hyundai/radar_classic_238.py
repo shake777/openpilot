@@ -310,7 +310,13 @@ def classic_238_address_role(address: int) -> tuple[int, int]:
 # EnableRadarTracks value that selects this stream for KIA_K7_PE lead selection.
 # It performs no ECU write and does not require legacy 0x500 tracks.
 RADAR_TRACK_MODE_CLASSIC_238 = 5
-CLASSIC_238_LONGITUDINAL_STATUS = 2
+# Status 2 is a confirmed moving object. Status 6 is the same object ID and
+# position continuing as the near in-lane lead in stop-and-go (2026-09-29: 65%
+# in lane, median 4.5 m, range within ~0.4 m of status 2 against vision); without
+# it 99% of those samples fell back to vision while stopped. Status 1/3/4/5 are
+# adjacent-lane, short-lived or roadside stationary objects and stay excluded.
+# trackState keeps the raw value; downstream checks only require >= 2.
+CLASSIC_238_LONGITUDINAL_STATUSES = frozenset({2, 6})
 # A 10 m minimum was tried after one low-speed test read near stopped leads ~2 m
 # farther than vision. A 70-minute engaged drive with near radar leads agreed with
 # vision within 0.5 m below 10 m (stopped and moving) and held steadier stop gaps.
@@ -328,11 +334,11 @@ def classic_238_radar_available(fingerprint_bus1) -> bool:
 
 
 def classic_238_longitudinal_tracks(tracks, now_ns: int) -> list[Classic238DisplayTrack]:
-  # status 1/3-6 remain uninterpreted; only fresh, confirmed status-2 objects
-  # near the ego lane that are not approaching over the ground are candidates.
+  # Only fresh status-2/6 objects near the ego lane that are not approaching
+  # over the ground are candidates.
   return [
     track for track in tracks
-    if (track.status == CLASSIC_238_LONGITUDINAL_STATUS
+    if (track.status in CLASSIC_238_LONGITUDINAL_STATUSES
         and now_ns - track.last_seen_ns <= CLASSIC_238_MAX_TRIPLET_AGE_NS
         and CLASSIC_238_MIN_D_REL_M <= track.kinematics.d_rel <= CLASSIC_238_MAX_D_REL_M
         and abs(track.kinematics.y_rel) <= CLASSIC_238_MAX_ABS_Y_REL_M

@@ -214,12 +214,13 @@ class TestClassic238LongitudinalSelection:
                                   kinematics=kinematics, last_seen_ns=1_000_000_000 - age_ns)
 
   @pytest.mark.parametrize("v_lead", (8.0, 0.0, -1.0))
-  def test_fresh_confirmed_track_near_ego_lane_is_selected(self, v_lead):
-    track = self.track(v_lead=v_lead)
+  @pytest.mark.parametrize("status", (2, 6))
+  def test_fresh_confirmed_track_near_ego_lane_is_selected(self, v_lead, status):
+    track = self.track(status=status, v_lead=v_lead)
     assert classic_238_longitudinal_tracks([track], 1_000_000_000) == [track]
 
   @pytest.mark.parametrize("kwargs", (
-    {"status": 1}, {"status": 6}, {"age_ns": 150_000_001},
+    {"status": 1}, {"status": 3}, {"status": 4}, {"age_ns": 150_000_001},
     {"status": 5}, {"distance": 2.9}, {"distance": 200.1}, {"lateral": 2.1}, {"lateral": -2.1},
     {"v_lead": -1.1},
   ))
