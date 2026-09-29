@@ -15,8 +15,7 @@ from tools.c4_diagnostics.can_inventory import CanInventoryWriter
 from tools.c4_diagnostics.parked_probe import summarize_last_once
 from tools.c4_diagnostics.qcamera_capture import (
   QCameraCaptureWriter,
-  next_representative_video_time,
-  representative_video_due,
+  plan_bundle_start,
 )
 from tools.c4_diagnostics.radar_capture import MAX_PENDING_DIAGNOSTICS, RadarCaptureWriter, capture_can_frame
 from tools.c4_diagnostics.scene_capture import SceneCaptureWriter, build_scene_frame
@@ -27,6 +26,10 @@ NetworkType = log.DeviceState.NetworkType
 CONFIG_RETRY_SECONDS = 60
 UPLOAD_RETRY_SECONDS = 15
 SCENE_INTERVAL_SECONDS = 0.1
+# Video bundles keep the existing ~40-60 s window. The data-only bundle between
+# them is limited to 20 s (~1.8 MB) to keep server load low.
+VIDEO_BUNDLE_MAX_SECONDS = 60.0
+DATA_BUNDLE_MAX_SECONDS = 20.0
 SCENE_SERVICES = ("carState", "modelV2", "liveTracks", "radarState", "carControl")
 
 
@@ -140,7 +143,9 @@ def main() -> None:
   scene_writer = None
   inventory_writer = None
   video_writer = None
+  next_capture_time = None
   next_video_time = None
+  bundle_max_age = VIDEO_BUNDLE_MAX_SECONDS
   next_scene_time = time.monotonic()
   try:
     while not stop_event.is_set():
@@ -153,18 +158,20 @@ def main() -> None:
       onroad = sm.valid["deviceState"] and sm["deviceState"].started
       monotonic_now = time.monotonic()
       if not onroad:
+        next_capture_time = None
         next_video_time = None
-      elif next_video_time is None:
-        # First bundle at the start of each drive, then one every 10 minutes.
-        next_video_time = monotonic_now
-      if onroad and writer is None and representative_video_due(monotonic_now, next_video_time):
-        writer = RadarCaptureWriter(spool_dir)
-        scene_writer = SceneCaptureWriter(spool_dir, writer.capture_name, writer.started_at)
-        inventory_writer = CanInventoryWriter(spool_dir, writer.capture_name)
-        video_writer = QCameraCaptureWriter(spool_dir, writer.capture_name)
-        next_video_time = next_representative_video_time(monotonic_now)
-        next_scene_time = monotonic_now
-      elif not onroad and writer is not None and scene_writer is not None and inventory_writer is not None:
+      elif writer is None:
+        # One bundle at drive start and every 5 minutes; every other one (10 min) has video.
+        start, with_video, next_capture_time, next_video_time = plan_bundle_start(
+          monotonic_now, next_capture_time, next_video_time)
+        if start:
+          writer = RadarCaptureWriter(spool_dir)
+          scene_writer = SceneCaptureWriter(spool_dir, writer.capture_name, writer.started_at)
+          inventory_writer = CanInventoryWriter(spool_dir, writer.capture_name)
+          video_writer = QCameraCaptureWriter(spool_dir, writer.capture_name) if with_video else None
+          bundle_max_age = VIDEO_BUNDLE_MAX_SECONDS if with_video else DATA_BUNDLE_MAX_SECONDS
+          next_scene_time = monotonic_now
+      if not onroad and writer is not None and scene_writer is not None and inventory_writer is not None:
         finalize_capture(writer, scene_writer, inventory_writer, video_writer)
         writer = None
         scene_writer = None
@@ -194,7 +201,7 @@ def main() -> None:
         next_scene_time = monotonic_now + SCENE_INTERVAL_SECONDS
 
       if (writer is not None and scene_writer is not None and inventory_writer is not None and
-          (writer.should_rotate(now) or scene_writer.should_rotate(now))):
+          (writer.should_rotate(now, bundle_max_age) or scene_writer.should_rotate(now, bundle_max_age))):
         finalize_capture(writer, scene_writer, inventory_writer, video_writer)
         writer = None
         scene_writer = None

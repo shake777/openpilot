@@ -18,6 +18,29 @@ def next_representative_video_time(now: float) -> float:
   return now + REPRESENTATIVE_CAPTURE_INTERVAL_SECONDS
 
 
+# Data-only bundles fill the gap between video bundles: 0 min video+data,
+# 5 min data, 10 min video+data, ...
+DATA_CAPTURE_INTERVAL_SECONDS = 5 * 60
+
+
+def plan_bundle_start(now: float, next_capture_time: float | None,
+                      next_video_time: float | None) -> tuple[bool, bool, float | None, float | None]:
+  """Return (start, with_video, next_capture_time, next_video_time).
+
+  `None` schedules mean a new drive: start a video bundle immediately.
+  """
+  if next_capture_time is None:
+    next_capture_time = now
+  if next_video_time is None:
+    next_video_time = now
+  if now < next_capture_time:
+    return False, False, next_capture_time, next_video_time
+  with_video = representative_video_due(now, next_video_time)
+  if with_video:
+    next_video_time = next_representative_video_time(now)
+  return True, with_video, now + DATA_CAPTURE_INTERVAL_SECONDS, next_video_time
+
+
 class QCameraCaptureWriter:
   def __init__(self, spool_dir: Path, capture_name: str):
     self.partial_path = spool_dir / f"{capture_name}.qcamera.h264.partial"

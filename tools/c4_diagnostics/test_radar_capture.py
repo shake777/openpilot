@@ -15,6 +15,7 @@ from tools.c4_diagnostics.qcamera_capture import (
   VIDEO_DURATION_SECONDS,
   next_representative_video_time,
   representative_video_due,
+  plan_bundle_start,
 )
 from tools.c4_diagnostics.radar_capture import MAX_CAPTURE_BYTES, MAX_PENDING_DIAGNOSTICS, RadarCaptureWriter, capture_can_frame, iter_records
 from tools.c4_diagnostics.scene_capture import MAX_SCENE_BYTES, SceneCaptureWriter, build_scene_frame
@@ -190,6 +191,24 @@ class TestRadarCapture(unittest.TestCase):
       self.assertEqual(video.read_bytes(), b"headerkeydelta")
       self.assertEqual(saved["duration_s"], 30.0)
       self.assertEqual(saved["frames"], 2)
+
+  def test_bundles_every_five_minutes_with_video_every_ten(self):
+    capture, video = None, None
+    starts = []
+    now = 1000.0
+    while now < 1000.0 + 25 * 60:
+      start, with_video, capture, video = plan_bundle_start(now, capture, video)
+      if start:
+        starts.append((round((now - 1000.0) / 60), with_video))
+        now += 40.0  # one bundle is recorded before the next plan is checked
+      else:
+        now += 0.5
+    self.assertEqual(starts, [(0, True), (5, False), (10, True), (15, False), (20, True)])
+
+  def test_new_drive_starts_with_video_bundle_immediately(self):
+    self.assertEqual(plan_bundle_start(50.0, None, None), (True, True, 350.0, 650.0))
+    self.assertEqual(plan_bundle_start(349.0, 350.0, 650.0), (False, False, 350.0, 650.0))
+    self.assertEqual(plan_bundle_start(350.0, 350.0, 650.0), (True, False, 650.0, 650.0))
 
   def test_representative_video_uses_ten_minutes_and_thirty_seconds(self):
     self.assertEqual(REPRESENTATIVE_CAPTURE_INTERVAL_SECONDS, 600)
