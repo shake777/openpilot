@@ -140,14 +140,17 @@ def model_renderer_module(monkeypatch):
   return module
 
 
-@pytest.mark.parametrize(('track_id', 'expected'), [(42, '42'), (1003, '-')])
-def test_classic_radar_label_shows_only_object_id(model_renderer_module, monkeypatch, track_id, expected):
+@pytest.mark.parametrize(('track_id', 'v_lead', 'is_metric', 'expected'), [
+  (42, 10.0, True, '42 36'), (42, 10.0, False, '42 22'), (1003, 0.0, True, '- 0'), (42, float('nan'), True, '42'),
+])
+def test_classic_radar_label_shows_object_id_and_speed(model_renderer_module, monkeypatch, track_id, v_lead, is_metric, expected):
   module = model_renderer_module
   renderer = object.__new__(module.ModelRenderer)
   renderer._get_path_length_idx = lambda *_args: 0
   renderer._map_to_screen = lambda *_args: (100, 100)
   lines = SimpleNamespace(x=[0.0], z=[0.0])
-  point = SimpleNamespace(dRel=7.0, yRel=0.3, trackState=2, trackId=track_id)
+  module.ui_state.is_metric = is_metric
+  point = SimpleNamespace(dRel=7.0, yRel=0.3, trackState=2, trackId=track_id, vLead=v_lead)
 
   class Messages(dict):
     valid = {'classicRadarTracks': True, 'modelV2': True}

@@ -1211,8 +1211,14 @@ class ModelRenderer(Widget):
       color = rl.Color(53, 224, 193, 230) if confirmed else rl.Color(125, 135, 146, 230)
       rl.draw_circle(x, y, 9.0, color)
       # trackId is the radar's own object ID (0-63); larger values mean unknown.
+      # The number after it is the object's ground speed (km/h or mph).
       object_id = int(point.trackId)
-      draw_text_ui_style(str(object_id) if object_id < 64 else "-", x, y - 24, 26,
+      label = str(object_id) if object_id < 64 else "-"
+      v_lead = float(point.vLead)
+      if np.isfinite(v_lead):
+        speed = round(v_lead * (3.6 if ui_state.is_metric else 2.2369363))
+        label = f"{label} {speed}"
+      draw_text_ui_style(label, x, y - 24, 26,
                          rl.Color(255, 255, 255, 230), align="center", y_offset=0.0)
 
 

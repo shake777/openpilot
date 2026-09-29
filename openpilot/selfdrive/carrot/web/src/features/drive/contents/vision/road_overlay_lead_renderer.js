@@ -15,9 +15,24 @@ function finiteNumber(value, fallback = 0) {
 // radarcan uses 1000+ when the two frames disagree or the ID is duplicated.
 export const CLASSIC_RADAR_MAX_OBJECT_ID = 63;
 
-export function formatClassicRadarLabel(radar) {
+// Ground speed of the object: raw frames carry vLead; the compact wire only
+// carries vRel, so fall back to ego speed + vRel. km/h, or mph when imperial.
+export function classicRadarGroundSpeed(radar, vEgo) {
+  const vLead = Number(radar?.vLead);
+  if (Number.isFinite(vLead)) return vLead;
+  const vRel = Number(radar?.vRel);
+  const ego = Number(vEgo);
+  return Number.isFinite(vRel) && Number.isFinite(ego) ? ego + vRel : null;
+}
+
+export function formatClassicRadarLabel(radar, options = {}) {
   const objectId = finiteNumber(radar?.trackId, -1);
-  return objectId >= 0 && objectId <= CLASSIC_RADAR_MAX_OBJECT_ID ? String(Math.trunc(objectId)) : "-";
+  const idText = objectId >= 0 && objectId <= CLASSIC_RADAR_MAX_OBJECT_ID ? String(Math.trunc(objectId)) : "-";
+  const speed = classicRadarGroundSpeed(radar, options.vEgo);
+  if (speed === null) return idText;
+  const factor = options.isMetric === false ? 2.2369363 : 3.6;
+  const shown = Math.round(speed * factor);
+  return `${idText} ${Object.is(shown, -0) ? 0 : shown}`;
 }
 
 export function createRoadOverlayLeadRenderer(options = {}) {
@@ -314,10 +329,11 @@ export function createRoadOverlayLeadRenderer(options = {}) {
     }
   }
 
-  function drawClassicRadarTargets(classicRadarTracks, sourceModel, calibTransform, videoWidth, videoHeight) {
+  function drawClassicRadarTargets(classicRadarTracks, sourceModel, calibTransform, videoWidth, videoHeight, vEgo) {
     const projectionLine = model.getRadarProjectionLine(sourceModel);
     if (!projectionLine) return;
     const uiScale = ui.getScale(videoWidth, videoHeight);
+    const labelOptions = { vEgo, isMetric: isMetricDisplay() };
     for (const radar of model.getClassicRadarTracks(classicRadarTracks)) {
       const dRel = finiteNumber(radar?.dRel, 0);
       if (dRel <= 2.5) continue;
@@ -329,7 +345,7 @@ export function createRoadOverlayLeadRenderer(options = {}) {
       const center = projection.projectPointPrecise(calibTransform, dRel, -yRel, z);
       if (!center) continue;
       geometry.drawPolygon(geometry.circlePolygon(center.x, center.y, Math.max(7 * uiScale, 4)), accent);
-      const label = formatClassicRadarLabel(radar);
+      const label = formatClassicRadarLabel(radar, labelOptions);
       ui.drawText(label, center.x, center.y - 12 * uiScale, {
         fontSize: Math.max(26 * uiScale, 13),
         fontWeight: 800,
@@ -461,7 +477,8 @@ export function createRoadOverlayLeadRenderer(options = {}) {
 
     drawPathStatusText(modelPath, hudState, calibTransform, videoWidth, videoHeight, primaryStatusAnchorBox);
     drawRadarTargets(radarState, sourceModel, calibTransform, videoWidth, videoHeight);
-    drawClassicRadarTargets(overlayState?.classicRadarTracks, sourceModel, calibTransform, videoWidth, videoHeight);
+    const vEgo = finiteNumber(hudState?.carState?.vEgo, finiteNumber(hudState?.carState?.vEgoCluster, NaN));
+    drawClassicRadarTargets(overlayState?.classicRadarTracks, sourceModel, calibTransform, videoWidth, videoHeight, vEgo);
   }
 
   reset();

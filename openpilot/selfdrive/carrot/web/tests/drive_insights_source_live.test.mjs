@@ -64,7 +64,7 @@ test("Drive Insights exposes classic 0x238 candidates without selecting them for
     relativeSpeedMps: -2.5,
     measured: true,
     selected: false,
-    label: "4",
+    label: "4 34",
   });
   assert.equal(snapshot.freshness.radar.state, "fresh");
 });
@@ -92,7 +92,7 @@ test("Drive Insights labels mode-5 liveTracks with the matching 0x238 object ID 
 
   assert.equal(snapshot.radar.length, 2);
   assert.equal(snapshot.radar[0].selected, true);
-  assert.equal(snapshot.radar[0].label, "17");
+  assert.equal(snapshot.radar[0].label, "17 40");
   assert.equal(snapshot.radar[1].id, "classic238:1002");
-  assert.equal(snapshot.radar[1].label, undefined);
+  assert.equal(snapshot.radar[1].label, "- 43");
 });
