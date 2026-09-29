@@ -16,6 +16,7 @@ from opendbc.car.hyundai.radar_classic_238 import (
   CLASSIC_238_END_ADDR,
   CLASSIC_238_START_ADDR,
   Classic238DisplayTracker,
+  classic_238_display_ids,
 )
 
 
@@ -66,9 +67,10 @@ def main():
     msg = messaging.new_message('classicRadarTracks')
     msg.valid = True
     points = msg.classicRadarTracks.init('points', len(tracks))
-    for point, track in zip(points, tracks, strict=True):
+    display_ids = classic_238_display_ids(tracks)
+    for point, track, display_id in zip(points, tracks, display_ids, strict=True):
       kinematics = track.kinematics
-      point.trackId = track.track_id
+      point.trackId = display_id
       point.dRel = kinematics.d_rel
       point.yRel = kinematics.y_rel
       point.vRel = kinematics.v_rel

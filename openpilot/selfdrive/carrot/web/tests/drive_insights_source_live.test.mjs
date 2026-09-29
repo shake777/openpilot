@@ -64,6 +64,35 @@ test("Drive Insights exposes classic 0x238 candidates without selecting them for
     relativeSpeedMps: -2.5,
     measured: true,
     selected: false,
+    label: "4",
   });
   assert.equal(snapshot.freshness.radar.state, "fresh");
+});
+
+test("Drive Insights labels mode-5 liveTracks with the matching 0x238 object ID once", () => {
+  const snapshot = normalizeDriveInsightsLiveSnapshot({
+    timestampMs: 1_000,
+    hudState: { carState: { vEgo: 12 } },
+    overlayState: {
+      radarState: { leadOne: { status: true, dRel: 20.4, yRel: 0.1, radarTrackId: 4003, radar: true } },
+      liveTracks: {
+        points: [{ trackId: 4003, dRel: 20.4, yRel: 0.1, vRel: -1.0, measured: true, radarSource: "frontRadar" }],
+      },
+      classicRadarTracks: {
+        points: [
+          { trackId: 17, dRel: 20.1, yRel: 0.0, vRel: -1.0, measured: true },
+          { trackId: 1002, dRel: 35.0, yRel: 3.5, vRel: 0.0, measured: true },
+        ],
+      },
+    },
+    receivedAtMonotonic: { carState: 990, radarState: 990, liveTracks: 985, classicRadarTracks: 980 },
+    connectionState: "connected",
+    routeId: null,
+  });
+
+  assert.equal(snapshot.radar.length, 2);
+  assert.equal(snapshot.radar[0].selected, true);
+  assert.equal(snapshot.radar[0].label, "17");
+  assert.equal(snapshot.radar[1].id, "classic238:1002");
+  assert.equal(snapshot.radar[1].label, undefined);
 });

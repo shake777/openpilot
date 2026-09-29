@@ -13,6 +13,7 @@ from opendbc.car.hyundai.radar_classic_238 import (
   Classic238TrackObservation,
   Classic238Triplet,
   classic_238_address_role,
+  classic_238_display_ids,
   classic_238_longitudinal_tracks,
   classic_238_radar_available,
 )
@@ -281,3 +282,14 @@ class TestClassic238ObjectIdAssociation:
       tracker.current(200_000_000)
       tracks = tracker.update_scan(resume_ns, [self.observation(object_id, 20.4)])
       assert [track.track_id for track in tracks] != [first]
+
+  def test_display_ids_use_radar_object_id_once(self):
+    def track(track_id, object_id, seen_ns):
+      kinematics = Classic238RadarKinematics(d_rel=20.0, y_rel=0.0, v_rel=0.0, v_lead=8.0,
+                                             a_rel=float("nan"), yv_rel=0.0)
+      return Classic238DisplayTrack(track_id=track_id, slot=0, status=2, object_sequence=0,
+                                    kinematics=kinematics, last_seen_ns=seen_ns, object_id=object_id)
+
+    tracks = [track(0, 17, 0), track(1, 17, 30_000_000), track(2, None, 30_000_000), track(3, 63, 0)]
+    # The fresher holder of a reused ID keeps it; unknown and older duplicates fall back.
+    assert classic_238_display_ids(tracks) == [1000, 17, 1002, 63]

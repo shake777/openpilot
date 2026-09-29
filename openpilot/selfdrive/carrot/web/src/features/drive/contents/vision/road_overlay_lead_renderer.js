@@ -11,15 +11,13 @@ function finiteNumber(value, fallback = 0) {
   return Number.isFinite(number) ? number : fallback;
 }
 
+// classicRadarTracks.trackId carries the radar's own 6-bit object ID (0-63);
+// radarcan uses 1000+ when the two frames disagree or the ID is duplicated.
+export const CLASSIC_RADAR_MAX_OBJECT_ID = 63;
+
 export function formatClassicRadarLabel(radar) {
-  const trackId = finiteNumber(radar?.trackId, 0);
-  const trackState = finiteNumber(radar?.trackState, 0);
-  const confirmed = trackState === 2;
-  const dRel = finiteNumber(radar?.dRel, 0);
-  const yRel = finiteNumber(radar?.yRel, 0);
-  const vLead = finiteNumber(radar?.vLead, 0);
-  const vRel = finiteNumber(radar?.vRel, 0);
-  return `238 T${trackId} S${trackState}${confirmed ? "C" : "U"} ${dRel.toFixed(0)}m y${yRel >= 0 ? "+" : ""}${yRel.toFixed(1)} V${vLead.toFixed(1)} Δ${vRel >= 0 ? "+" : ""}${vRel.toFixed(1)}m/s`;
+  const objectId = finiteNumber(radar?.trackId, -1);
+  return objectId >= 0 && objectId <= CLASSIC_RADAR_MAX_OBJECT_ID ? String(Math.trunc(objectId)) : "-";
 }
 
 export function createRoadOverlayLeadRenderer(options = {}) {
@@ -333,7 +331,7 @@ export function createRoadOverlayLeadRenderer(options = {}) {
       geometry.drawPolygon(geometry.circlePolygon(center.x, center.y, Math.max(7 * uiScale, 4)), accent);
       const label = formatClassicRadarLabel(radar);
       ui.drawText(label, center.x, center.y - 12 * uiScale, {
-        fontSize: Math.max(18 * uiScale, 11),
+        fontSize: Math.max(26 * uiScale, 13),
         fontWeight: 800,
         fillStyle: accent,
         strokeStyle: "rgba(0,0,0,0.92)",

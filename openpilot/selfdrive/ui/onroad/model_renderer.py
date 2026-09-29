@@ -1210,7 +1210,9 @@ class ModelRenderer(Widget):
       confirmed = int(point.trackState) == 2
       color = rl.Color(53, 224, 193, 230) if confirmed else rl.Color(125, 135, 146, 230)
       rl.draw_circle(x, y, 9.0, color)
-      draw_text_ui_style(str(int(point.trackId)), x, y - 24, 26,
+      # trackId is the radar's own object ID (0-63); larger values mean unknown.
+      object_id = int(point.trackId)
+      draw_text_ui_style(str(object_id) if object_id < 64 else "-", x, y - 24, 26,
                          rl.Color(255, 255, 255, 230), align="center", y_offset=0.0)
 
 

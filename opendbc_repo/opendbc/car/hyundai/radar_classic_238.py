@@ -247,6 +247,29 @@ class Classic238DisplayTracker:
     return self.association.current(mono_time_ns)
 
 
+# Display-only classicRadarTracks IDs: the radar's own 6-bit object ID (0-63)
+# when the two frames agree, otherwise this offset plus the local track ID.
+CLASSIC_238_DISPLAY_FALLBACK_ID_OFFSET = 1000
+
+
+def classic_238_display_ids(tracks) -> list[int]:
+  """Radar object IDs for display, unique within one message.
+
+  The freshest track keeps a duplicated object ID (the radar may reuse an ID
+  while an older track is still held); the others use the fallback range.
+  """
+  owners: dict[int, Classic238DisplayTrack] = {}
+  for track in tracks:
+    if track.object_id is None:
+      continue
+    owner = owners.get(track.object_id)
+    if owner is None or track.last_seen_ns > owner.last_seen_ns:
+      owners[track.object_id] = track
+  return [track.object_id if track.object_id is not None and owners[track.object_id] is track
+          else CLASSIC_238_DISPLAY_FALLBACK_ID_OFFSET + track.track_id
+          for track in tracks]
+
+
 class Classic238Assembler:
   def __init__(self, max_age_ns: int = CLASSIC_238_MAX_TRIPLET_AGE_NS,
                max_spread_ns: int = CLASSIC_238_MAX_TRIPLET_SPREAD_NS):

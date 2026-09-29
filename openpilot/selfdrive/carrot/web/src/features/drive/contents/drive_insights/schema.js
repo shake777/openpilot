@@ -198,6 +198,19 @@ function unpackLiveTracks(value) {
   return tracks;
 }
 
+// Mode-5 liveTracks points carry the same raw 0x238 values as their display
+// point; the two services may be one 50 ms scan apart, hence the range margin.
+const CLASSIC_MATCH_MAX_DX_M = 1.0;
+const CLASSIC_MATCH_MAX_DY_M = 0.4;
+const CLASSIC_MAX_OBJECT_ID = 63;
+
+function classicObjectLabel(value) {
+  const objectId = finiteOrNull(value);
+  return objectId !== null && objectId >= 0 && objectId <= CLASSIC_MAX_OBJECT_ID
+    ? String(Math.trunc(objectId))
+    : null;
+}
+
 function radarTrackKey(value) {
   const trackId = finiteOrNull(
     typeof value === "number" ? value : Number.parseFloat(String(value ?? "")),
@@ -240,7 +253,32 @@ function normalizeRadar(overlayState) {
       relativeSpeedMps: entry.relativeSpeedMps,
       measured: entry.measured,
       selected: entry.selected,
+      ...(entry.label ? { label: entry.label } : {}),
     }));
+  };
+
+  // 0x238 계열 점의 trackId는 레이더 자체 객체 ID(0-63)이다. EnableRadarTracks=5의
+  // liveTracks 점은 같은 스캔의 같은 좌표로 나오므로, 그 점에 객체 ID를 붙이고
+  // 표시 전용 점은 한 번만 그린다.
+  const classicTracks = [];
+  for (const track of unpackLiveTracks(overlayState?.classicRadarTracks)) {
+    const xM = finiteOrNull(track?.xM ?? track?.dRel);
+    const yM = finiteOrNull(track?.yM ?? track?.yRel);
+    if (xM === null || yM === null) continue;
+    classicTracks.push({ track, xM, yM, used: false, label: classicObjectLabel(track?.trackId) });
+  }
+  const takeClassicLabel = (xM, yM) => {
+    let best = null;
+    for (const classic of classicTracks) {
+      if (classic.used) continue;
+      const dx = Math.abs(classic.xM - xM);
+      const dy = Math.abs(classic.yM - yM);
+      if (dx > CLASSIC_MATCH_MAX_DX_M || dy > CLASSIC_MATCH_MAX_DY_M) continue;
+      if (!best || dx + dy < best.cost) best = { classic, cost: dx + dy };
+    }
+    if (!best) return null;
+    best.classic.used = true;
+    return best.classic.label;
   };
 
   for (const track of unpackLiveTracks(overlayState?.liveTracks)) {
@@ -260,15 +298,15 @@ function normalizeRadar(overlayState) {
       relativeSpeedMps: finiteOrNull(track?.relativeSpeedMps ?? track?.vRel),
       measured: typeof track?.measured === "boolean" ? track.measured : Boolean(track?.radar),
       selected,
+      label: source === "front" ? takeClassicLabel(xM, yM) : null,
       dedupeKey: trackKey !== null ? `track:${trackKey}` : `liveTracks:${stableIndex}`,
     });
   }
 
-  // 0x238 계열 후보는 제어용 liveTracks와 분리된 표시 전용 점으로 추가한다.
-  for (const track of unpackLiveTracks(overlayState?.classicRadarTracks)) {
-    const xM = finiteOrNull(track?.xM ?? track?.dRel);
-    const yM = finiteOrNull(track?.yM ?? track?.yRel);
-    if (xM === null || yM === null) continue;
+  // 제어용 liveTracks와 겹치지 않는 0x238 점은 표시 전용 점으로 추가한다.
+  for (const classic of classicTracks) {
+    if (classic.used) continue;
+    const { track, xM, yM } = classic;
     const trackId = track?.id ?? track?.trackId ?? radar.length;
     push({
       id: `classic238:${trackId}`,
@@ -278,6 +316,7 @@ function normalizeRadar(overlayState) {
       relativeSpeedMps: finiteOrNull(track?.relativeSpeedMps ?? track?.vRel),
       measured: typeof track?.measured === "boolean" ? track.measured : true,
       selected: false,
+      label: classic.label,
       dedupeKey: `classic238:${trackId}`,
     });
   }
