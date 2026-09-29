@@ -14,3 +14,15 @@ def effective_radar_track_mode(
       return 1 if classic_238 else 0
     return int(configured_mode)
   return -2 if radar_unavailable else 1
+
+
+def radar_lead_comfort_extras_enabled(brand: str, classic_238: bool = False) -> bool:
+  """Whether radar leads get the radar-only following extras.
+
+  These are the opening-gap headroom hold (extra TF up to 2.5 s), the
+  LeadAccelResponse catch-up boost and the lead-deceleration preview. Vision
+  leads never get them. K7 mode 5 follows its radar lead like a vision lead:
+  radar distance/speed, but base TF and normal MPC costs. On the K7 the hold
+  kept gaps long, then released into catch-up acceleration and braking.
+  """
+  return not (brand == "hyundai" and classic_238)

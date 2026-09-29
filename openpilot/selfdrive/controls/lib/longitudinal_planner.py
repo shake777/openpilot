@@ -28,6 +28,8 @@ from openpilot.common.params import Params
 from openpilot.common.stopping_params import get_stopping_speed
 from openpilot.selfdrive.carrot.carrot_man_input import get_carrot_man
 from openpilot.selfdrive.controls.lib.cruise_coasting import CruiseCoastingPlan, coasting_percent, no_coasting_lead
+from openpilot.selfdrive.carrot.radar import radar_lead_comfort_extras_enabled
+from opendbc.car.hyundai.values import HyundaiExtFlags
 
 
 LON_MPC_STEP = 0.2  # first step is 0.2s
@@ -54,6 +56,9 @@ class LongitudinalPlanner:
     self.fcw = False
     # VW MEB(ID.4/ID.5)에서만 True. 가속 오버라이드 중 출발 FCW 오탐을 끄기 위한 게이트.
     self.is_vw_meb = is_volkswagen_meb(CP)
+    # K7 EnableRadarTracks=5 follows its radar lead like a vision lead.
+    self.radar_comfort_extras = radar_lead_comfort_extras_enabled(
+      CP.brand, bool(CP.extFlags & HyundaiExtFlags.RADAR_CLASSIC_238.value))
     self.dt = dt
     self.allow_throttle = True
 
@@ -227,7 +232,8 @@ class LongitudinalPlanner:
     lead_track_frames = self.update_lead_tracks(sm['radarState'])
     # Response strength is a driver preference at every following-distance level.
     lead_accel_response_enabled = (
-      carrot.leadAccelResponse > 0
+      self.radar_comfort_extras
+      and carrot.leadAccelResponse > 0
       and not carrot.lane_change_active
       and not reset_state
       and not sm['carState'].gasPressed
@@ -245,7 +251,8 @@ class LongitudinalPlanner:
       a_change_cost_starting=carrot.aChangeCostStarting,
       lead_accel_response_enabled=lead_accel_response_enabled,
       lead_gap_enabled=(
-        not reset_state and not sm['carState'].gasPressed
+        self.radar_comfort_extras
+        and not reset_state and not sm['carState'].gasPressed
         and not force_slow_decel and not carrot.lane_change_active
       ),
       cutout_relief_enabled=(
@@ -297,7 +304,8 @@ class LongitudinalPlanner:
     leads = (sm['radarState'].leadOne, sm['radarState'].leadTwo)
     lead = leads[lead_index]
     preview_enabled = (
-      self.mpc.mode == 'acc'
+      self.radar_comfort_extras
+      and self.mpc.mode == 'acc'
       and not reset_state
       and not sm['carState'].gasPressed
       and not sm['carState'].brakePressed
