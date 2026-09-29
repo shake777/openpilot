@@ -1,5 +1,91 @@
 # Repository memory
 
+- On 2026-09-29, the user clarified that DM's 20-second standard hold starts
+  only when surrounding moving traffic appears after an absence. Additional
+  vehicles during occupancy do not extend it. Camera monitoring during the hold
+  uses stock timing/detection/inputs, expires prior grace and suspends experimental
+  resets; camera-unavailable timing stays 15/30/45. Then experimental criteria
+  resume, but occupied surroundings cannot earn the empty-road bonus. Retain
+  accumulated warnings/lockout and the two-second observation dropout retention.
+  No forced warning for attentive drivers. See docs/dm_traffic_hold_20260929.md.
+
+- On 2026-09-29, the user approved the C4 DM inset immediately right of D:
+  84x84 at (382,144), leaving 10px before the right strip. VISION moves above it;
+  confidence-dot travel returns to full height. C3 placement is unchanged.
+  DM event stage1 is visual-only; stage2 (first audible) has final PCM gain
+  >=0.7, and stage3 (final) always uses 1.0 regardless of user/ambient volume.
+  Match event identity and sound together so navigation sharing the WAV retains
+  normal volume. Desktop PCM/UI tests and synthetic rendering do not establish
+  physical-device loudness or readability. See docs/dm_onroad_preview_20260928.md.
+
+- On 2026-09-28, the user requested live DriverMonitoringMode changes. Poll
+  typed Params every 0.5 seconds in the existing DM dispatcher; ignore the retired
+  CARROT_DM_MODE startup latch. Preserve elapsed awareness, calibration, traffic
+  hold, warning counts and lockout. A real mode change ends previous interaction
+  grace and the forward-attention streak; an unchanged read must preserve them.
+  Shorter budgets may immediately trigger warnings; toggling is never attention
+  or a lockout reset. See docs/driver_monitoring_dm2.md for desktop validation.
+
+- On 2026-09-28, the user superseded the Ioniq 5 PE-only touch restriction:
+  Hyundai/Kia/Genesis CAN-FD uses original ECAN STEER_TOUCH_2AF by received
+  profile, without a vehicle-name whitelist. Require the named DBC/address/size,
+  existing layout/checksum/status/counter and freshness checks. Discover late
+  arrivals with optional registration only after reception; do not add missing-
+  hardware CAN faults or populate/modify ADAS TX caches. Address 0x2AF alone
+  is insufficient. All 37 configured CAN-FD platforms pass synthetic parser
+  tests; physical evidence remains Ioniq 5 PE only. See docs/driver_monitoring_dm2.md.
+
+- On 2026-09-28, the user authorized clearing DM lockout after confirmed parking:
+  valid/fresh Park, raw zero speed, standstill and disengaged/inactive status for
+  one continuous second, in both modes with or without camera. Filtered speed
+  may have only <0.01 m/s settling residue. Speed-only or engage OFF/ON resets
+  are excluded. Keep stock policy.py unchanged; selfdrived persists fresh DM
+  lock/release transitions so a cleared saved flag cannot relock on DM restart.
+  Desktop tests do not validate actual parking. See docs/driver_monitoring_dm2.md.
+
+- On 2026-09-28, the user authorized automatic Git update/reboot after failed
+  builds or manager startup, waiting through network loss. The launcher owns a
+  standalone recovery display and releases its build lock before recovery Git.
+  Retry after 30 seconds; automatic reboot requires a newly applied commit, so
+  the same broken revision cannot reboot-loop. Keep the manual Git pull/reboot
+  button, current branch/upstream, dirty-file protection and shared repo lock.
+  No hard reset, normal onroad update action or AGNOS-policy change is implied.
+  Graphics failure has a stdlib-only update fallback. Desktop tests/renders do
+  not validate physical C3/C4 touch or device reboot. See docs/startup_recovery.md.
+
+- On 2026-09-28, the user requested original Ioniq 5 PE wheel touch in DM,
+  explicitly preserving existing ADAS transmission. ECAN 0x2AF raw bytes now
+  feed separate CarState.steeringTouch; torque-based steeringPressed and TX
+  remain unchanged. Six historical segments verify the receive layout/checksum
+  and counter, not physical-contact ground truth or current vehicle validation.
+  Accept the lowest reported touch level 1; raw TOUCH1/2 ranges overlap and must
+  not become an unvalidated baseline-plus-one threshold. No-camera modes accept
+  fresh held contact; camera mode 1 accepts only release-to-contact edges, never
+  indefinite grace from holding or reconnecting. Camera mode 0 stays stock.
+  Unknown, stale, malformed or frozen-counter data grants no touch credit;
+  terminal alerts remain. Scope this empirical profile to Ioniq 5 PE until other
+  vehicles are verified. See docs/driver_monitoring_dm2.md.
+
+- On 2026-09-28, the user revised DriverMonitoringMode after the initial DM2
+  implementation. Mode 0 keeps stock camera behavior, but unavailable-camera
+  interaction timing is now 15/30/45 seconds. Mode 1 uses the same interaction
+  timing, doubled only on a verified empty straight road. New moving traffic
+  removes the empty-road bonus for 20 seconds. Camera mode 1 uses 2x stock vision
+  timing, 4x on a verified empty road, and 20% head-pose tolerance relaxation.
+  The user explicitly selected a full interaction grace: fresh control/BT input
+  resets monitoring and defers camera warnings for 45/90 seconds before its
+  warning clock starts. This supersedes the earlier two-second credit and
+  protected-distraction debt restriction; detection thresholds remain unchanged,
+  but sleep/eye/phone warnings are also delayed. Confident forward attention for
+  two seconds resets the camera clock without renewing interaction grace.
+  Terminal alerts and lockout remain; no input or context change clears them.
+  Camera absence AND failure automatically use interaction monitoring, with
+  recovery preserving progress; do not add a manual camera-installation setting.
+  Stock policy/dmonitoringd files stay unchanged. DisableDM is migration-only;
+  CarrotVisionEnabled is independent. These are requested experimental timing
+  choices, not statutory limits or device/driving validation. See
+  docs/driver_monitoring_dm2.md and both localized DM guides.
+
 - On 2026-09-28, the user requested ordinary Git storage wherever possible to
   eliminate this branch's Git LFS bandwidth dependency. All seven remaining
   LFS pointers were converted to byte-identical Git blobs; bundled models and

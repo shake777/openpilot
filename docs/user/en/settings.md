@@ -103,18 +103,18 @@ Ignoring `x0.01`, `x0.001`, `cm`, `km/h`, or `%` can make a value appear one hun
 
 ## Settings map
 
-The current `carrot_settings.json` contains **183 parameters**. Every entry is assigned to one of these menus:
+The current `carrot_settings.json` contains **185 parameters**. Every entry is assigned to one of these menus:
 
 | Category | Count | Groups |
 |---|---:|---|
-| Driving control | 122 | Startup and auto, buttons and presets, steering, speed and deceleration, cruise and following gap |
-| Vehicle and hardware | 15 | Hyundai/Kia, CAN FD/HDA, radar, driver monitoring, vehicle assistance, device hardware |
+| Driving control | 123 | Startup and auto, buttons and presets, steering, speed and deceleration, cruise and following gap |
+| Vehicle and hardware | 16 | Hyundai/Kia, CAN FD/HDA, radar, driver monitoring, vehicle assistance, device hardware |
 | Display | 34 | Information, path, brightness/on-road view, external HUD |
 | System | 12 | Recording/power, network/map, sound, software |
 
 ## Driving control
 
-These 122 settings can affect vehicle motion. Change one item at a time.
+These 123 settings can affect vehicle motion. Change one item at a time.
 
 <a id="start-auto"></a>
 ### Startup and auto — 9 settings
@@ -234,12 +234,14 @@ These settings describe the car, harness, and device hardware configuration. Do 
 | Hyundai/Kia | `HyundaiCameraSCC`, `IsLdwsCar`, `HapticFeedbackWhenSpeedCamera` | SCC connection, LDWS behavior, and speed-event haptics |
 | CAN FD/HDA | `CanfdHDA2`, `CanfdDebug`, `HDPuse` | HDA2 selection, CAN FD diagnostics, and HDP |
 | Radar | `EnableRadarTracks`, `RadarTrackFlip`, `EnableCornerRadar`, `CarrotRadarMode`, `CarrotRadarCutInSensitivity` | SCC radar, front-track orientation, corner radar, and Carrot Radar processing and cut-in sensitivity |
-| Driver monitoring | `DisableDM`, `MuteDoor`, `MuteSeatbelt` | Driver monitoring and selected vehicle alerts |
+| Driver monitoring | `DriverMonitoringMode`, `CarrotVisionEnabled`, `MuteDoor`, `MuteSeatbelt` | Driver monitoring and selected vehicle alerts |
 | Vehicle assistance | `MaxAngleFrames`, `SpeedFromPCM` | Steering-angle frames and stock-SCC speed control |
 | Device hardware | `HardwareC3xLite` | Speakerless C3X Lite audio and process configuration |
 
 > [!CAUTION]
 > Incorrect `HyundaiCameraSCC`, `CanfdHDA2`, `EnableRadarTracks`, `CarrotRadarMode`, `CarrotRadarCutInSensitivity`, or `SpeedFromPCM` values can change vehicle identification, SCC, radar, or longitudinal behavior. Confirm the vehicle, model year, HDA generation, harness location, and whether stock ACC is retained.
+
+`DriverMonitoringMode` defaults to 0: stock comma camera monitoring criteria, or 15/30/45-second interaction monitoring when the camera is absent or failed. Mode 1 is for controlled experiments, with empty-road timing extensions and an interaction grace before camera warnings. A shared exception resets the usage restriction after one continuous second of valid Park, standstill and disengaged status. Mode changes apply live at roughly half-second intervals without rebooting. Switching preserves accumulated monitoring time, warning counts and lockout, and ends the previous interaction grace and forward-attention streak. See [driver monitoring and experimental-use conditions](driver-monitoring.md). `CarrotVisionEnabled` controls web road video independently; only the video function of old `DisableDM=2` is preserved on migration. Validated original `STEER_TOUCH_2AF` input on Hyundai/Kia/Genesis CAN-FD is supported without a vehicle-name whitelist, with held-contact and new-contact behavior depending on camera availability and mode.
 
 See [Radar tracks and corner radar](radar.md) before changing radar modes.
 
@@ -339,6 +341,10 @@ The 12 system settings cover recording, power, network, maps, sound, and softwar
 | Software | `SoftwareMenu` | Carrot Web software-menu availability |
 
 Check storage use for recording and network use, heat, and privacy before enabling live streaming.
+
+`SoundVolumeAdjust` changes general sound volume. DM's first audible warning has a 70% minimum output gain; its final warning always uses 100%, regardless of volume settings or ambient-noise attenuation. The preceding visual-only notice remains silent. See [driver monitoring](driver-monitoring.md) for details.
+
+Experimental DM switches to standard monitoring for 20 seconds only when moving traffic first appears after an absence. Additional vehicles do not extend it; experimental monitoring then resumes, with no empty-road bonus while traffic remains.
 
 ## Safe adjustment order
 

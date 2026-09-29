@@ -113,3 +113,50 @@ def test_invalid_preparation_metadata_refuses_before_writing(package, mode):
   with pytest.raises(RuntimeError):
     prepare.prepare(root, open)
   assert not (root / 'prepared.img.partial').exists()
+
+
+def test_public_integrated_package_requires_checks_for_exact_image(tmp_path, monkeypatch):
+  import build_windows_installer as publisher
+  from types import SimpleNamespace
+  image = SimpleNamespace(stat=lambda: SimpleNamespace(st_size=40 * (1 << 30)))
+  compressed = SimpleNamespace(stat=lambda: SimpleNamespace(st_size=100))
+  monkeypatch.setattr(publisher, 'digest', lambda path: 'a' * 64 if path is image else 'b' * 64)
+  metadata = tmp_path / 'candidate.json'
+  metadata.write_text(json.dumps(dict(storage_format=1, data_partition=17, image_bytes=40 * (1 << 30),
+    source_commit='c' * 40, state='PROTECTED_CANDIDATE_NOT_BOOT_TESTED', image_sha256='a' * 64,
+    compressed_bytes=100, compressed_sha256='b' * 64)))
+  private = publisher.integrated_release(image, compressed, metadata)
+  assert private['version'] == 'v0.4.0-storage-candidate'
+  validation = tmp_path / 'validation.json'
+  evidence = dict(image_sha256='a' * 64, card_readback=True, protected_boot=True, model_ready=True,
+                  wifi_reconnect=True, ssh_persistence=True, data_update=True, power_cut_cycles=0)
+  validation.write_text(json.dumps(evidence))
+  released = publisher.integrated_release(image, compressed, metadata, validation)
+  assert released['version'] == 'v0.4.0-protected-preview' and released['power_cut_cycles'] == 0
+  for changes in ({'image_sha256': 'd' * 64}, {'protected_boot': False}, {'data_update': False}, {'power_cut_cycles': -1}):
+    validation.write_text(json.dumps(evidence | changes))
+    with pytest.raises(ValueError, match='Physical validation'):
+      publisher.integrated_release(image, compressed, metadata, validation)
+
+  owner = tmp_path / 'owner.json'
+  report = dict(image_sha256='a' * 64, card_readback=True, owner_reported_boot=True, publication_requested=True)
+  owner.write_text(json.dumps(report))
+  preview = publisher.integrated_release(image, compressed, metadata, owner_boot=owner)
+  assert preview['version'] == 'v0.4.0-boot-preview'
+  assert preview['owner_reported_boot'] and preview['validation_basis'] == 'owner_report'
+  assert preview['validation_checks'] == dict(card_readback=True, protected_boot=False, model_ready=False,
+                                             wifi_reconnect=False, ssh_persistence=False, data_update=False)
+  assert preview['power_cut_cycles'] == 0
+  html = (Path(__file__).parent / 'windows_installer/설치안내.html').read_text(encoding='utf-8')
+  guide = publisher.candidate_guide(html, preview)
+  assert 'v0.4.0-boot-preview/carrot-jetson-windows.zip' in guide
+  assert 'owner reports normal operation' in guide and 'tests remain pending' in guide
+  assert 'boot and updates tested' not in guide and 'private test installer' not in guide.lower()
+  assert '약 30~90분' in guide
+  with pytest.raises(ValueError, match='not both'):
+    publisher.integrated_release(image, compressed, metadata, validation, owner)
+  for changes in ({'image_sha256': 'd' * 64}, {'card_readback': False},
+                  {'owner_reported_boot': False}, {'publication_requested': False}):
+    owner.write_text(json.dumps(report | changes))
+    with pytest.raises(ValueError, match='Owner preview'):
+      publisher.integrated_release(image, compressed, metadata, owner_boot=owner)
