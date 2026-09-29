@@ -74,3 +74,34 @@ spinner and model-build-cache tests. The initial broader run lacked SCons on the
 Windows host; installing SCons only in the disposable test dependency directory
 allowed that test to pass. Lint found no new diagnostics; five existing build.py
 diagnostics are outside these changes.
+
+### 2026-09-29: delayed tmux output after successful startup
+
+On Ioniq 5 C4 `07b62e389ed26c81` at `ef6f56d3`, manager and its
+services were running while tmux output arrived in bursts. The manager's
+`unblock_stdout` relay now writes into the startup-capture pipe instead of
+directly into a terminal. Its Python stdout therefore uses block buffering;
+the capture process's own flush cannot release bytes still held upstream.
+Flush each relayed chunk inside the existing nonblocking/error-handling path.
+This preserves scheduling, process startup, and recovery behavior.
+
+An isolated Python/PTY probe on the same device extracted the existing relay
+function and compared it with the flush added. With stdout piped and a child
+printing one flushed marker before sleeping for one second, the original
+delivered no marker within 0.6 seconds (nor at exit, because the relay uses
+`os._exit`). The corrected relay delivered the marker within that window;
+both exited successfully without stderr. The running vehicle manager was
+not changed or restarted. Full launcher behavior after updating remains to
+be checked at the next startup.
+
+The user then reproduced delayed manager status lines after restarting on
+`20e0775e`, with the relay flush present. The first probe explicitly flushed
+the child print, so it missed a second buffer: Python configures the manager's
+stdout while fd 1 is still the capture pipe. `forkpty()` changes fd 1 to a
+terminal but does not update that existing Python stream's buffering policy.
+Reconfigure the child stdout for line buffering after `forkpty`, retaining
+the parent relay flush. A second isolated probe on the same device used an
+ordinary unflushed `print`: the existing fix delivered it only at child exit,
+while child line buffering delivered it within 0.6 seconds. The regression
+test exercises the actual relay function with ordinary print and piped output.
+This corrects the incomplete first fix; the live manager is not hot-patched.

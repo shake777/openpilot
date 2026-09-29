@@ -161,6 +161,7 @@ struct OnroadEvent @0xc4fa6047f024e718 {
     torqueNNLoad @118;
     updateRebootRequired @125;
     driverMonitorFallback @126;
+    systemReady @127;
 
     soundsUnavailableDEPRECATED @47;
   }
@@ -2239,6 +2240,7 @@ struct DriverMonitoringState {
   dm2InteractionCredit @21 :Float32;
   dm2VisionTimeoutFactor @22 :Float32 = 1;
   dm2InteractionGraceRemaining @23 :Float32;
+  dm2Disabled @24 :Bool;
 
   alwaysOn @3 :Bool;
   alwaysOnLockout @4 :Bool;
