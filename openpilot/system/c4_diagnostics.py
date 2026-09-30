@@ -36,9 +36,12 @@ SCENE_SERVICES = ("carState", "modelV2", "liveTracks", "radarState", "carControl
 # Optional: scenes are still written before the first plan arrives.
 PLAN_SERVICE = "longitudinalPlan"
 CAMERA_SERVICES = ("liveCalibration", "roadCameraState")
-# Lateral settings recorded for the server's lane-centering recommendations.
+# Settings recorded for the server's lane-centering and radar recommendations.
 SCENE_SETTING_KEYS = ("UseLaneLineSpeed", "PathOffset", "CameraYawTrimDeg", "AdjustLaneOffset", "SteerActuatorDelay",
-                      "LatSmoothSec", "CustomSR", "LatMpcPathCost", "LatMpcInputOffset")
+                      "LatSmoothSec", "CustomSR", "LatMpcPathCost", "LatMpcInputOffset",
+                      # Longitudinal/radar settings for the radar review.
+                      "EnableRadarTracks", "LongitudinalPersonality", "TFollowGap1", "TFollowGap2", "TFollowGap3",
+                      "TFollowGap4", "StopDistanceCarrot", "LeadAccelResponse", "SpeedTFFactor", "TFollowDecelBoost")
 SCENE_SETTINGS_EVERY_FRAMES = 50
 
 
