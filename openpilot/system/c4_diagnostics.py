@@ -31,6 +31,8 @@ SCENE_INTERVAL_SECONDS = 0.1
 VIDEO_BUNDLE_MAX_SECONDS = 60.0
 DATA_BUNDLE_MAX_SECONDS = 20.0
 SCENE_SERVICES = ("carState", "modelV2", "liveTracks", "radarState", "carControl")
+# Optional: scenes are still written before the first plan arrives.
+PLAN_SERVICE = "longitudinalPlan"
 
 
 def read_source_id(config) -> str | None:
@@ -138,7 +140,7 @@ def main() -> None:
   sendcan_sock = messaging.sub_sock("sendcan", conflate=False)
   qroad_sock = messaging.sub_sock("qRoadEncodeData", conflate=False)
   pending_diagnostics = deque(maxlen=MAX_PENDING_DIAGNOSTICS)
-  sm = messaging.SubMaster(["deviceState", "carState", "modelV2", "liveTracks", "radarState", "carControl"])
+  sm = messaging.SubMaster(["deviceState", "carState", "modelV2", "liveTracks", "radarState", "carControl", PLAN_SERVICE])
   writer = None
   scene_writer = None
   inventory_writer = None
@@ -197,6 +199,7 @@ def main() -> None:
       if scene_writer is not None and monotonic_now >= next_scene_time and scene_ready(sm):
         scene_writer.append(build_scene_frame(
           time.monotonic_ns(), sm["carState"], sm["modelV2"], sm["liveTracks"], sm["radarState"], sm["carControl"],
+          sm[PLAN_SERVICE] if sm.seen[PLAN_SERVICE] else None,
         ))
         next_scene_time = monotonic_now + SCENE_INTERVAL_SECONDS
 

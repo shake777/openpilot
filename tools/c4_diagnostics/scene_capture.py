@@ -60,7 +60,13 @@ def _lead(lead):
   }
 
 
-def build_scene_frame(mono_time: int, car_state, model, live_tracks, radar_state, car_control) -> dict:
+def _bool(obj, name):
+  value = getattr(obj, name, None)
+  return bool(value) if value is not None else None
+
+
+def build_scene_frame(mono_time: int, car_state, model, live_tracks, radar_state, car_control,
+                      longitudinal_plan=None) -> dict:
   lane_lines = [_xy(line) for line in _take(model.laneLines, 4)]
   model_leads = [{
     "probability": _number(lead.prob),
@@ -83,6 +89,18 @@ def build_scene_frame(mono_time: int, car_state, model, live_tracks, radar_state
     "long_active": bool(car_control.longActive),
     "enabled": bool(car_control.enabled),
     "target_accel": _number(car_control.actuators.accel),
+    # Graph/review fields (2026-09-30): measured acceleration, driver pedals,
+    # stock blind-spot warnings and the planner's following target.
+    "a_ego": _number(getattr(car_state, "aEgo", None)),
+    "gas_pressed": _bool(car_state, "gasPressed"),
+    "brake_pressed": _bool(car_state, "brakePressed"),
+    "standstill": _bool(car_state, "standstill"),
+    "steering_pressed": _bool(car_state, "steeringPressed"),
+    "left_blindspot": _bool(car_state, "leftBlindspot"),
+    "right_blindspot": _bool(car_state, "rightBlindspot"),
+    "t_follow": _number(getattr(longitudinal_plan, "tFollow", None)) if longitudinal_plan is not None else None,
+    "desired_distance": (_number(getattr(longitudinal_plan, "desiredDistance", None))
+                         if longitudinal_plan is not None else None),
   }
 
 

@@ -141,12 +141,14 @@ class TestRadarCapture(unittest.TestCase):
                                  v=IntegerOnlyList([8.0]), a=IntegerOnlyList([-0.1]))
     frame = build_scene_frame(
       123,
-      SimpleNamespace(vEgo=10.0, steeringAngleDeg=2.0),
+      SimpleNamespace(vEgo=10.0, steeringAngleDeg=2.0, aEgo=-0.3, gasPressed=False, brakePressed=True,
+                      standstill=False, steeringPressed=False, leftBlindspot=True, rightBlindspot=False),
       SimpleNamespace(position=xy, laneLines=IntegerOnlyList([xy] * 4),
                       laneLineProbs=IntegerOnlyList([0.9] * 4), leadsV3=IntegerOnlyList([model_lead])),
       SimpleNamespace(points=IntegerOnlyList([radar_point])),
       SimpleNamespace(leadOne=lead, leadTwo=lead),
       SimpleNamespace(longActive=True, enabled=True, actuators=SimpleNamespace(accel=-0.5)),
+      SimpleNamespace(tFollow=1.1, desiredDistance=16.5),
     )
     with tempfile.TemporaryDirectory() as temp_dir:
       writer = SceneCaptureWriter(Path(temp_dir), "capture", 1000)
@@ -158,6 +160,23 @@ class TestRadarCapture(unittest.TestCase):
     self.assertEqual(saved["points"][0]["track_id"], 7)
     self.assertEqual(saved["lead_one"]["d_rel"], 20.0)
     self.assertEqual(saved["target_accel"], -0.5)
+    self.assertEqual((saved["a_ego"], saved["brake_pressed"], saved["left_blindspot"]), (-0.3, True, True))
+    self.assertEqual((saved["t_follow"], saved["desired_distance"]), (1.1, 16.5))
+
+  def test_scene_capture_tolerates_missing_optional_fields(self):
+    xy = SimpleNamespace(x=IntegerOnlyList([0.0]), y=IntegerOnlyList([0.0]))
+    lead = SimpleNamespace(status=False, radar=False, radarTrackId=-1, dRel=0.0, yRel=0.0, vRel=0.0,
+                           vLead=0.0, dPath=0.0, modelProb=0.0)
+    frame = build_scene_frame(
+      1, SimpleNamespace(vEgo=0.0, steeringAngleDeg=0.0),
+      SimpleNamespace(position=xy, laneLines=IntegerOnlyList([]), laneLineProbs=IntegerOnlyList([]),
+                      leadsV3=IntegerOnlyList([])),
+      SimpleNamespace(points=IntegerOnlyList([])), SimpleNamespace(leadOne=lead, leadTwo=lead),
+      SimpleNamespace(longActive=False, enabled=False, actuators=SimpleNamespace(accel=0.0)),
+    )
+    self.assertIsNone(frame["a_ego"])
+    self.assertIsNone(frame["t_follow"])
+    self.assertIsNone(frame["left_blindspot"])
 
   def test_upload_includes_scene_companion(self):
     with tempfile.TemporaryDirectory() as temp_dir:
