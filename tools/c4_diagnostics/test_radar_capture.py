@@ -194,11 +194,13 @@ class TestRadarCapture(unittest.TestCase):
       inventory.write_text('{"schema":"c4-can-inventory-v1"}\n', encoding="utf-8")
       video.write_bytes(b"h264")
       video_metadata.write_text('{"schema":"c4-qcamera-video-v1"}\n', encoding="utf-8")
+      event = root / "capture.c4event.json"
+      event.write_text('{"schema":"c4-event-v1"}', encoding="utf-8")
       state_path = root / "state.json"
       state = {"schema": 2, "started_at": 1, "uploaded": {}}
       with patch("tools.c4_diagnostics.auto_upload.upload", return_value={"upload_id": "id"}) as send:
         upload_one(UploadConfig("https://example.com", "key"), "c4-001", state, state_path, capture)
-      self.assertEqual(send.call_args.args[3], [capture, scene, inventory, video, video_metadata])
+      self.assertEqual(send.call_args.args[3], [capture, scene, inventory, video, video_metadata, event])
 
   def test_qcamera_capture_starts_on_header_and_stops_after_thirty_seconds(self):
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -214,7 +216,7 @@ class TestRadarCapture(unittest.TestCase):
       self.assertEqual(saved["duration_s"], 30.0)
       self.assertEqual(saved["frames"], 2)
 
-  def test_bundles_every_five_minutes_with_video_every_ten(self):
+  def test_periodic_bundles_are_video_bundles_every_ten_minutes(self):
     capture, video = None, None
     starts = []
     now = 1000.0
@@ -225,12 +227,12 @@ class TestRadarCapture(unittest.TestCase):
         now += 40.0  # one bundle is recorded before the next plan is checked
       else:
         now += 0.5
-    self.assertEqual(starts, [(0, True), (5, False), (10, True), (15, False), (20, True)])
+    self.assertEqual(starts, [(0, True), (10, True), (20, True)])
 
   def test_new_drive_starts_with_video_bundle_immediately(self):
-    self.assertEqual(plan_bundle_start(50.0, None, None), (True, True, 350.0, 650.0))
-    self.assertEqual(plan_bundle_start(349.0, 350.0, 650.0), (False, False, 350.0, 650.0))
-    self.assertEqual(plan_bundle_start(350.0, 350.0, 650.0), (True, False, 650.0, 650.0))
+    self.assertEqual(plan_bundle_start(50.0, None, None), (True, True, 650.0, 650.0))
+    self.assertEqual(plan_bundle_start(649.0, 650.0, 650.0), (False, False, 650.0, 650.0))
+    self.assertEqual(plan_bundle_start(650.0, 650.0, 650.0), (True, True, 1250.0, 1250.0))
 
   def test_representative_video_uses_ten_minutes_and_thirty_seconds(self):
     self.assertEqual(REPRESENTATIVE_CAPTURE_INTERVAL_SECONDS, 600)

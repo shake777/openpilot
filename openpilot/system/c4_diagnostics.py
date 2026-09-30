@@ -18,7 +18,8 @@ from tools.c4_diagnostics.qcamera_capture import (
   QCameraCaptureWriter,
   plan_bundle_start,
 )
-from tools.c4_diagnostics.radar_capture import MAX_PENDING_DIAGNOSTICS, RadarCaptureWriter, capture_can_frame
+from tools.c4_diagnostics.event_capture import EVENT_POST_SECONDS, EventDetector, TimeRing, write_event_companion
+from tools.c4_diagnostics.radar_capture import MAX_PENDING_DIAGNOSTICS, RadarCaptureWriter, capture_can_frame, is_radar_address
 from tools.c4_diagnostics.scene_capture import SceneCaptureWriter, build_scene_frame
 from tools.c4_diagnostics.upload import UploadError, load_config
 
@@ -77,11 +78,14 @@ def write_meminfo(capture: Path) -> None:
 
 
 def finalize_capture(writer: RadarCaptureWriter, scene_writer: SceneCaptureWriter,
-                     inventory_writer: CanInventoryWriter, video_writer: QCameraCaptureWriter | None) -> None:
+                     inventory_writer: CanInventoryWriter, video_writer: QCameraCaptureWriter | None,
+                     event: tuple[str, int] | None = None) -> None:
   scene = scene_writer.finalize()
   inventory = inventory_writer.finalize()
   video, video_metadata = video_writer.finalize() if video_writer is not None else (None, None)
   capture = writer.finalize()
+  if capture is not None and event is not None:
+    write_event_companion(capture, *event)
   if capture is None:
     if scene is not None:
       scene.unlink(missing_ok=True)
@@ -168,6 +172,11 @@ def main() -> None:
   next_capture_time = None
   next_video_time = None
   bundle_max_age = VIDEO_BUNDLE_MAX_SECONDS
+  bundle_event = None
+  # Last 15 s of radar CAN and scene frames, written first when an event starts a bundle.
+  can_ring = TimeRing()
+  scene_ring = TimeRing()
+  detector = EventDetector()
   next_scene_time = time.monotonic()
   try:
     while not stop_event.is_set():
@@ -182,8 +191,10 @@ def main() -> None:
       if not onroad:
         next_capture_time = None
         next_video_time = None
+        can_ring.drain()
+        scene_ring.drain()
       elif writer is None:
-        # One bundle at drive start and every 5 minutes; every other one (10 min) has video.
+        # A video bundle at drive start and every 10 minutes; events add data-only bundles.
         start, with_video, next_capture_time, next_video_time = plan_bundle_start(
           monotonic_now, next_capture_time, next_video_time)
         if start:
@@ -192,9 +203,10 @@ def main() -> None:
           inventory_writer = CanInventoryWriter(spool_dir, writer.capture_name)
           video_writer = QCameraCaptureWriter(spool_dir, writer.capture_name) if with_video else None
           bundle_max_age = VIDEO_BUNDLE_MAX_SECONDS if with_video else DATA_BUNDLE_MAX_SECONDS
+          bundle_event = None
           next_scene_time = monotonic_now
       if not onroad and writer is not None and scene_writer is not None and inventory_writer is not None:
-        finalize_capture(writer, scene_writer, inventory_writer, video_writer)
+        finalize_capture(writer, scene_writer, inventory_writer, video_writer, bundle_event)
         writer = None
         scene_writer = None
         inventory_writer = None
@@ -203,6 +215,8 @@ def main() -> None:
       message = messaging.recv_one_or_none(can_sock)
       if message is not None:
         for frame in message.can:
+          if onroad and is_radar_address(frame.address, frame.src):
+            can_ring.push(message.logMonoTime, (message.logMonoTime, frame.address, frame.src, bytes(frame.dat)))
           if inventory_writer is not None:
             inventory_writer.append(message.logMonoTime, frame.address, frame.src, bytes(frame.dat))
           capture_can_frame(writer, pending_diagnostics, message.logMonoTime, frame.address, frame.src, bytes(frame.dat))
@@ -216,23 +230,47 @@ def main() -> None:
           video_writer.append(encoded.logMonoTime, encoded.qRoadEncodeData)
 
       now = time.time()
-      if scene_writer is not None and monotonic_now >= next_scene_time and scene_ready(sm):
-        scene_writer.append(build_scene_frame(
-          time.monotonic_ns(), sm["carState"], sm["modelV2"], sm["liveTracks"], sm["radarState"], sm["carControl"],
+      if onroad and monotonic_now >= next_scene_time and scene_ready(sm):
+        scene_mono = time.monotonic_ns()
+        scene_frame = build_scene_frame(
+          scene_mono, sm["carState"], sm["modelV2"], sm["liveTracks"], sm["radarState"], sm["carControl"],
           sm[PLAN_SERVICE] if sm.seen[PLAN_SERVICE] else None, scene_camera(sm),
-        ))
+        )
         next_scene_time = monotonic_now + SCENE_INTERVAL_SECONDS
+        if scene_writer is not None:
+          scene_writer.append(scene_frame)
+        else:
+          scene_ring.push(scene_mono, scene_frame)
+        car_state, car_control = sm["carState"], sm["carControl"]
+        reason = detector.update(scene_mono, car_state.vEgo, car_state.brakePressed, car_control.longActive,
+                                 car_control.actuators.accel, sm["radarState"].leadOne.status)
+        if reason is not None and writer is not None:
+          bundle_event = bundle_event or (reason, scene_mono)
+        elif reason is not None:
+          # Data-only event bundle: the buffered 15 s first, then 5 s more.
+          writer = RadarCaptureWriter(spool_dir)
+          scene_writer = SceneCaptureWriter(spool_dir, writer.capture_name, writer.started_at)
+          inventory_writer = CanInventoryWriter(spool_dir, writer.capture_name)
+          video_writer = None
+          for record in can_ring.drain():
+            writer.append(*record)
+          for frame in scene_ring.drain():
+            scene_writer.append(frame)
+          bundle_max_age = EVENT_POST_SECONDS
+          bundle_event = (reason, scene_mono)
+          cloudlog.event("c4_diagnostics_event", reason=reason)
 
       if (writer is not None and scene_writer is not None and inventory_writer is not None and
           (writer.should_rotate(now, bundle_max_age) or scene_writer.should_rotate(now, bundle_max_age))):
-        finalize_capture(writer, scene_writer, inventory_writer, video_writer)
+        finalize_capture(writer, scene_writer, inventory_writer, video_writer, bundle_event)
+        bundle_event = None
         writer = None
         scene_writer = None
         inventory_writer = None
         video_writer = None
   finally:
     if writer is not None and scene_writer is not None and inventory_writer is not None:
-      finalize_capture(writer, scene_writer, inventory_writer, video_writer)
+      finalize_capture(writer, scene_writer, inventory_writer, video_writer, bundle_event)
     stop_event.set()
     uploader.join(timeout=5)
 

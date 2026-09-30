@@ -18,9 +18,9 @@ def next_representative_video_time(now: float) -> float:
   return now + REPRESENTATIVE_CAPTURE_INTERVAL_SECONDS
 
 
-# Data-only bundles fill the gap between video bundles: 0 min video+data,
-# 5 min data, 10 min video+data, ...
-DATA_CAPTURE_INTERVAL_SECONDS = 5 * 60
+# Periodic bundles are video bundles every 10 minutes (0, 10, 20 ...). Review
+# moments between them are captured by event bundles (event_capture.py).
+DATA_CAPTURE_INTERVAL_SECONDS = REPRESENTATIVE_CAPTURE_INTERVAL_SECONDS
 
 
 def plan_bundle_start(now: float, next_capture_time: float | None,
