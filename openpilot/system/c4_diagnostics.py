@@ -65,7 +65,7 @@ def scene_settings(params, sm=None):
   if sm is not None and sm.seen["liveDelay"]:
     ld = sm["liveDelay"]
     values.update({"LearnedLatDelay": float(ld.lateralDelayEstimate),
-                   "LearnedLatDelayValid": float(ld.status == log.LiveDelayData.Status.estimated)})
+                   "LearnedLatDelayValid": float(str(ld.status) == "estimated")})
   return values
 DEFAULT_CAMERA_HEIGHT_M = 1.22
 
