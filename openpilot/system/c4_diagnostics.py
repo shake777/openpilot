@@ -6,7 +6,7 @@ import time
 from collections import deque
 from pathlib import Path
 
-from openpilot.cereal import log
+from openpilot.cereal import car, log
 import openpilot.cereal.messaging as messaging
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
@@ -43,15 +43,29 @@ SCENE_SETTING_KEYS = ("UseLaneLineSpeed", "PathOffset", "CameraYawTrimDeg", "Adj
                       "EnableRadarTracks", "LongitudinalPersonality", "TFollowGap1", "TFollowGap2", "TFollowGap3",
                       "TFollowGap4", "StopDistanceCarrot", "LeadAccelResponse", "SpeedTFFactor", "TFollowDecelBoost")
 SCENE_SETTINGS_EVERY_FRAMES = 50
+LEARNED_SERVICES = ("liveParameters", "liveDelay")
 
 
-def scene_settings(params):
+def scene_settings(params, sm=None):
   values = {}
   for key in SCENE_SETTING_KEYS:
     try:
       values[key] = params.get_float(key)
     except Exception:
       continue
+  try:
+    values["Wheelbase"] = float(messaging.log_from_bytes(params.get("CarParams"), car.CarParams).wheelbase)
+  except Exception:
+    pass
+  # Online-learned steering values, compared with CustomSR/SteerActuatorDelay on the server.
+  if sm is not None and sm.seen["liveParameters"]:
+    lp = sm["liveParameters"]
+    values.update({"LearnedSteerRatio": float(lp.steerRatio), "LearnedSteerRatioValid": float(lp.steerRatioValid),
+                   "LearnedStiffness": float(lp.stiffnessFactor), "LearnedAngleOffsetDeg": float(lp.angleOffsetAverageDeg)})
+  if sm is not None and sm.seen["liveDelay"]:
+    ld = sm["liveDelay"]
+    values.update({"LearnedLatDelay": float(ld.lateralDelayEstimate),
+                   "LearnedLatDelayValid": float(ld.status == log.LiveDelayData.Status.estimated)})
   return values
 DEFAULT_CAMERA_HEIGHT_M = 1.22
 
@@ -185,7 +199,7 @@ def main() -> None:
   qroad_sock = messaging.sub_sock("qRoadEncodeData", conflate=False)
   pending_diagnostics = deque(maxlen=MAX_PENDING_DIAGNOSTICS)
   sm = messaging.SubMaster(["deviceState", "carState", "modelV2", "liveTracks", "radarState", "carControl", PLAN_SERVICE,
-                            *CAMERA_SERVICES])
+                            *CAMERA_SERVICES, *LEARNED_SERVICES])
   writer = None
   scene_writer = None
   inventory_writer = None
@@ -258,7 +272,7 @@ def main() -> None:
         scene_frame = build_scene_frame(
           scene_mono, sm["carState"], sm["modelV2"], sm["liveTracks"], sm["radarState"], sm["carControl"],
           sm[PLAN_SERVICE] if sm.seen[PLAN_SERVICE] else None, scene_camera(sm),
-          scene_settings(params) if scene_count % SCENE_SETTINGS_EVERY_FRAMES == 0 else None,
+          scene_settings(params, sm) if scene_count % SCENE_SETTINGS_EVERY_FRAMES == 0 else None,
         )
         scene_count += 1
         next_scene_time = monotonic_now + SCENE_INTERVAL_SECONDS
