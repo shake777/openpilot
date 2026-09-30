@@ -87,11 +87,12 @@ class DPathRadarD:
 
   def __init__(self, CP: car.CarParams) -> None:
     params = Params()
+    classic_238 = bool(CP.extFlags & HyundaiExtFlags.RADAR_CLASSIC_238.value)
     enable_radar_tracks = effective_radar_track_mode(
       CP.brand,
       CP.radarUnavailable,
       params.get_int("EnableRadarTracks"),
-      classic_238=bool(CP.extFlags & HyundaiExtFlags.RADAR_CLASSIC_238.value),
+      classic_238=classic_238,
     )
     self.controller = DPathRadarController(
       prefer_corner_radar=corner_radar_enabled(
@@ -102,6 +103,7 @@ class DPathRadarD:
       cut_in_sensitivity=PRODUCTION_CUT_IN_SENSITIVITY,
       front_radar_measurement_delay_s=front_radar_distance_delay_s(CP),
       production_live_tracks=True,
+      near_vision_priority=classic_238 and enable_radar_tracks == 1,
     )
     self.radar_state = log.RadarState.new_message()
     self.radar_state_valid = False
