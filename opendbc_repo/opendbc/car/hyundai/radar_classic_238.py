@@ -317,6 +317,15 @@ RADAR_TRACK_MODE_CLASSIC_238 = 5
 # adjacent-lane, short-lived or roadside stationary objects and stay excluded.
 # trackState keeps the raw value; downstream checks only require >= 2.
 CLASSIC_238_LONGITUDINAL_STATUSES = frozenset({2, 6})
+# Status 1 is mostly adjacent-lane traffic, but inside the ego lane it is the
+# lead vision sees (2026-09-29/30, 39 bundles: 95% vision agreement, vision
+# carried the lead 83% of those samples) - e.g. a truck ahead at 8.5 m. Within
+# 20 m its range matches status 2 (median radar-vision -0.11/-0.05 m); farther
+# it reads 1-3 m long, and at |y| 1.2-2 m 66% had no vision lead. It keeps raw
+# trackState 1, which downstream treats as tentative: vision support required.
+CLASSIC_238_TENTATIVE_STATUS = 1
+CLASSIC_238_TENTATIVE_MAX_D_REL_M = 20.0
+CLASSIC_238_TENTATIVE_MAX_ABS_Y_REL_M = 1.2
 # A 10 m minimum was tried after one low-speed test read near stopped leads ~2 m
 # farther than vision. A 70-minute engaged drive with near radar leads agreed with
 # vision within 0.5 m below 10 m (stopped and moving) and held steadier stop gaps.
@@ -334,11 +343,14 @@ def classic_238_radar_available(fingerprint_bus1) -> bool:
 
 
 def classic_238_longitudinal_tracks(tracks, now_ns: int) -> list[Classic238DisplayTrack]:
-  # Only fresh status-2/6 objects near the ego lane that are not approaching
-  # over the ground are candidates.
+  # Only fresh status-2/6 objects near the ego lane (and near in-lane status 1)
+  # that are not approaching over the ground are candidates.
   return [
     track for track in tracks
-    if (track.status in CLASSIC_238_LONGITUDINAL_STATUSES
+    if ((track.status in CLASSIC_238_LONGITUDINAL_STATUSES
+         or (track.status == CLASSIC_238_TENTATIVE_STATUS
+             and track.kinematics.d_rel <= CLASSIC_238_TENTATIVE_MAX_D_REL_M
+             and abs(track.kinematics.y_rel) <= CLASSIC_238_TENTATIVE_MAX_ABS_Y_REL_M))
         and now_ns - track.last_seen_ns <= CLASSIC_238_MAX_TRIPLET_AGE_NS
         and CLASSIC_238_MIN_D_REL_M <= track.kinematics.d_rel <= CLASSIC_238_MAX_D_REL_M
         and abs(track.kinematics.y_rel) <= CLASSIC_238_MAX_ABS_Y_REL_M
