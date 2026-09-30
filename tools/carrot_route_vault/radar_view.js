@@ -29,6 +29,10 @@ export function attachRadarReview(video) {
     <div class="radar-toolbar"><label>레이더 소스<select data-sensor><option value="auto">자동</option><option value="front">전방</option><option value="corner">코너 포함</option></select></label>
     <label>표시 거리<select data-range><option>60</option><option selected>130</option><option>200</option></select></label>
     <label>전방 레이더 좌우<select data-radar-flip><option value="recorded">기록된 설정</option><option value="normal">정상</option><option value="flipped">반전</option></select></label>
+    <label>객체 정보<select data-label-mode><option value="off">끄기</option><option value="track" selected>Track ID</option><option value="distance">거리</option><option value="lateral">좌우 위치</option><option value="speed">속도</option><option value="relativeSpeed">상대속도</option></select></label>
+    <label><input type="checkbox" data-show-live checked>일반 트랙</label>
+    <label><input type="checkbox" data-show-classic checked>K7 0x238</label>
+    <label><input type="checkbox" data-hide-scc>SCC 제외</label>
     <button type="button" data-retry>다시 불러오기</button></div>
     <p class="radar-status" role="status" aria-live="polite"></p>
     <canvas class="radar-map" aria-label="레이더와 차선, 선행차를 위에서 본 화면"></canvas>
@@ -67,6 +71,17 @@ export function attachRadarReview(video) {
   const hexBytes = value => typeof value === 'string' ? (value.match(/../g)||[]).join(' ') : '—';
   const classicAddress = (slot, role) => `0x${(0x238+Number(slot)*3+role).toString(16).toUpperCase()}`;
   const valid = v => typeof v === 'number' && Number.isFinite(v);
+  const checked = selector => find(selector).checked;
+  function objectLabel(point, frame, classic=false) {
+    const mode=find('[data-label-mode]').value;
+    if(mode==='off')return '';
+    if(mode==='track')return classic?`T${point.track_id??point.slot}`:String(point.track_id);
+    if(mode==='distance')return `${num(point.d_rel)} m`;
+    if(mode==='lateral')return `${num(point.y_rel)} m`;
+    if(mode==='speed')return `${num(point.v_lead*3.6)} km/h`;
+    const relative=classic?point.v_lead-frame.v_ego:point.v_rel;
+    return `${num(relative*3.6)} km/h`;
+  }
   const videoAvailable = () => Boolean(video.getAttribute('src')) && Number.isFinite(video.duration) && video.duration > 0;
   const usesVideo = () => videoAvailable() && (!payload || payload.videoAligned);
   const duration = () => frames.length ? times.at(-1) : (videoAvailable() ? video.duration : 0);
@@ -94,8 +109,8 @@ export function attachRadarReview(video) {
     line(frame.path.map(([x,y])=>[x,-y]),'#3b9687',3);
     const [cx,cy]=xy(0,0);ctx.fillStyle='#dae3eb';ctx.fillRect(cx-7,cy-3,14,22);
     function ring(d,y,color,label,dashed=false){if(!valid(d)||!valid(y))return;const [x,z]=xy(d,y);ctx.strokeStyle=color;ctx.lineWidth=2;ctx.setLineDash(dashed?[4,3]:[]);ctx.strokeRect(x-10,z-10,20,20);ctx.setLineDash([]);ctx.fillStyle=color;ctx.fillText(label,x+13,z-6);}
-    for(const p of frame.classic_238_objects||[]){if(p.d_rel < -30||p.d_rel>range||Math.abs(p.y_rel)>15)continue;const [x,y]=xy(p.d_rel,p.y_rel),chosen=p.slot===selectedClassicSlot;ctx.beginPath();ctx.moveTo(x,y-(chosen?7:5));ctx.lineTo(x+(chosen?7:5),y);ctx.lineTo(x,y+(chosen?7:5));ctx.lineTo(x-(chosen?7:5),y);ctx.closePath();ctx.strokeStyle=p.confirmed_candidate?'#35e0c1':'#7d8792';ctx.lineWidth=chosen?2.5:1.5;ctx.stroke();ctx.fillStyle=ctx.strokeStyle;ctx.fillText(`T${p.track_id??p.slot} C${p.slot}:S${p.status}`,x+7,y-7);hitPoints.push({x,y,kind:'classic',slot:p.slot});}
-    for(const p of frame.points||[]){if(p.d_rel < -30||p.d_rel>range||Math.abs(p.y_rel)>15)continue;const [x,y]=xy(p.d_rel,p.y_rel);const chosen=p.track_id===selectedTrack;ctx.beginPath();ctx.arc(x,y,chosen?6:3.5,0,Math.PI*2);ctx.fillStyle=p.source.startsWith('corner')?'#cd91ff':'#56baff';ctx.fill();ctx.fillText(String(p.track_id),x+6,y+12);hitPoints.push({x,y,id:p.track_id});}
+    if(checked('[data-show-classic]'))for(const p of frame.classic_238_objects||[]){if(p.d_rel < -30||p.d_rel>range||Math.abs(p.y_rel)>15)continue;const [x,y]=xy(p.d_rel,p.y_rel),chosen=p.slot===selectedClassicSlot;ctx.beginPath();ctx.moveTo(x,y-(chosen?7:5));ctx.lineTo(x+(chosen?7:5),y);ctx.lineTo(x,y+(chosen?7:5));ctx.lineTo(x-(chosen?7:5),y);ctx.closePath();ctx.strokeStyle=p.confirmed_candidate?'#35e0c1':'#7d8792';ctx.lineWidth=chosen?2.5:1.5;ctx.stroke();ctx.fillStyle=ctx.strokeStyle;const label=objectLabel(p,frame,true);if(label)ctx.fillText(label,x+7,y-7);hitPoints.push({x,y,kind:'classic',slot:p.slot});}
+    if(checked('[data-show-live]'))for(const p of frame.points||[]){if(checked('[data-hide-scc]')&&String(p.source).toLowerCase()==='scc')continue;if(p.d_rel < -30||p.d_rel>range||Math.abs(p.y_rel)>15)continue;const [x,y]=xy(p.d_rel,p.y_rel);const chosen=p.track_id===selectedTrack;ctx.beginPath();ctx.arc(x,y,chosen?6:3.5,0,Math.PI*2);ctx.fillStyle=p.source.startsWith('corner')?'#cd91ff':'#56baff';ctx.fill();const label=objectLabel(p,frame);if(label)ctx.fillText(label,x+6,y+12);hitPoints.push({x,y,id:p.track_id});}
     for(const lead of frame.model_leads||[]){if(lead.probability>=.1)ring(lead.x-payload.radarToCamera,-lead.y,'#ffb653',`V ${num(lead.probability,2)}`);}
     for(const [key,label] of [['recorded_one','R1'],['recorded_two','R2']]){const p=frame[key];if(p?.status)ring(p.d_rel,p.y_rel,'#ffda70',label,true);}
     for(const [key,label] of [['lead_one','L1'],['lead_two','L2']]){const p=frame.selection?.[key];if(p)ring(p.d_rel,p.y_rel,'#67edc0',label);}
@@ -166,6 +181,7 @@ export function attachRadarReview(video) {
   map.onclick=e=>{const rect=map.getBoundingClientRect();let distance=18;selectedTrack=null;selectedClassicSlot=null;for(const p of hitPoints){const d=Math.hypot(e.clientX-rect.left-p.x,e.clientY-rect.top-p.y);if(d<distance){distance=d;if(p.kind==='classic')selectedClassicSlot=p.slot;else selectedTrack=p.id;}}draw();};
   new ResizeObserver(draw).observe(review);
   find('[data-range]').onchange=draw;
+  for(const selector of ['[data-label-mode]','[data-show-live]','[data-show-classic]','[data-hide-scc]'])find(selector).onchange=draw;
   async function load(selected) {
     segment=selected;generation++;const token=generation;controller?.abort();controller=new AbortController();
     const signal=controller.signal;running=false;frames=[];times=[];payload=null;index=0;current=0;selectedTrack=null;selectedClassicSlot=null;scrub.disabled=true;draw();

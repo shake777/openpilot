@@ -1,6 +1,7 @@
 import asyncio
 import gzip
 import json
+from pathlib import Path
 
 from aiohttp.test_utils import TestClient, TestServer
 from aiohttp import web
@@ -105,6 +106,16 @@ def test_export_matches_desktop_controller():
     assert item['selection']['lead_one'] == exporter.finite_json(asdict(selection.lead_one)) if selection.lead_one else item['selection']['lead_one'] is None
   assert payload['sensitivity'] == exporter.replay.VALIDATION_DEFAULT_SENSITIVITY
   json.dumps(payload, allow_nan=False)
+
+
+def test_radar_asset_defaults_to_compact_track_ids():
+  asset = (Path(__file__).parents[1] / "radar_view.js").read_text(encoding="utf-8")
+  assert '<option value="track" selected>Track ID</option>' in asset
+  assert 'data-show-live checked' in asset
+  assert 'data-show-classic checked' in asset
+  assert 'data-hide-scc' in asset
+  assert '`T${point.track_id??point.slot}`' in asset
+  assert 'C${p.slot}:S${p.status}' not in asset
 
 
 def test_export_adds_classic_238_objects_without_changing_selection():
