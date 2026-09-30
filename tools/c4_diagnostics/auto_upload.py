@@ -52,6 +52,46 @@ def deterministic_upload_id(source_id: str, capture: Path, sha256: str) -> str:
   return str(uuid.uuid5(UPLOAD_NAMESPACE, f"{source_id}\n{capture.name}\n{sha256}"))
 
 
+# Uploaded bundles were never removed, so /data grew with every drive. Keep the
+# spool under this size: oldest uploaded bundles go first, then the oldest
+# not-yet-uploaded ones (e.g. while the server is unreachable for days).
+MAX_SPOOL_BYTES = 512 * 1024 * 1024
+BUNDLE_SUFFIXES = (".c4radar", ".c4scene", ".c4can.json", ".meminfo", ".qcamera.h264", ".qcamera.json", ".c4event.json")
+
+
+def _bundle_files(spool_dir: Path) -> dict[str, list[Path]]:
+  bundles: dict[str, list[Path]] = {}
+  for path in spool_dir.iterdir():
+    if path.is_file() and not path.name.endswith(".partial"):
+      for suffix in BUNDLE_SUFFIXES:
+        if path.name.endswith(suffix):
+          bundles.setdefault(path.name[:-len(suffix)], []).append(path)
+          break
+  return bundles
+
+
+def prune_spool(spool_dir: Path, state: dict, max_bytes: int = MAX_SPOOL_BYTES) -> int:
+  """Delete whole bundles, oldest first, until the spool fits. Returns bytes freed."""
+  if not spool_dir.is_dir():
+    return 0
+  bundles = _bundle_files(spool_dir)
+  sizes = {name: sum(path.stat().st_size for path in files) for name, files in bundles.items()}
+  total = sum(sizes.values())
+  if total <= max_bytes:
+    return 0
+  uploaded = state["uploaded"]
+  # Capture names start with a UTC timestamp, so name order is age order.
+  order = sorted(bundles, key=lambda name: (f"{name}.c4radar" not in uploaded, name))
+  freed = 0
+  for name in order:
+    if total - freed <= max_bytes:
+      break
+    for path in bundles[name]:
+      path.unlink(missing_ok=True)
+    freed += sizes[name]
+  return freed
+
+
 def pending_captures(spool_dir: Path, state: dict) -> list[Path]:
   uploaded = state["uploaded"]
   inventory = [path for path in sorted(spool_dir.glob("radar-inventory-*.json")) if path.name not in uploaded]

@@ -181,6 +181,24 @@ class TestRadarCapture(unittest.TestCase):
     self.assertIsNone(frame["left_blindspot"])
     self.assertIsNone(frame["calib"])
 
+  def test_prune_spool_removes_oldest_uploaded_bundles_first(self):
+    from tools.c4_diagnostics.auto_upload import prune_spool
+    with tempfile.TemporaryDirectory() as temp_dir:
+      root = Path(temp_dir)
+      for name in ("20260901T000000Z-a", "20260902T000000Z-b", "20260903T000000Z-c"):
+        (root / f"{name}.c4radar").write_bytes(b"r" * 100)
+        (root / f"{name}.c4scene").write_bytes(b"s" * 100)
+      (root / "radar-inventory-x.json").write_text("{}", encoding="utf-8")
+      state = {"uploaded": {"20260902T000000Z-b.c4radar": {}, "20260903T000000Z-c.c4radar": {}}}
+      self.assertEqual(prune_spool(root, state, max_bytes=450), 200)
+      names = sorted(path.name for path in root.iterdir())
+      # b (oldest uploaded) goes first; a is still pending upload and stays.
+      self.assertNotIn("20260902T000000Z-b.c4radar", names)
+      self.assertIn("20260901T000000Z-a.c4radar", names)
+      self.assertIn("radar-inventory-x.json", names)
+      self.assertEqual(prune_spool(root, state, max_bytes=100), 400)
+      self.assertEqual(sorted(path.name for path in root.iterdir()), ["radar-inventory-x.json"])
+
   def test_upload_includes_scene_companion(self):
     with tempfile.TemporaryDirectory() as temp_dir:
       root = Path(temp_dir)

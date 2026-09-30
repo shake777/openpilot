@@ -11,7 +11,7 @@ import openpilot.cereal.messaging as messaging
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
 from openpilot.common.transformations.camera import DEVICE_CAMERAS
-from tools.c4_diagnostics.auto_upload import load_or_start_state, pending_captures, upload_one
+from tools.c4_diagnostics.auto_upload import load_or_start_state, pending_captures, prune_spool, upload_one
 from tools.c4_diagnostics.can_inventory import CanInventoryWriter
 from tools.c4_diagnostics.parked_probe import summarize_last_once
 from tools.c4_diagnostics.qcamera_capture import (
@@ -118,6 +118,10 @@ def upload_loop(config, source_id: str, state: dict, state_path: Path, spool_dir
   while not stop_event.is_set():
     if not network_online.wait(UPLOAD_RETRY_SECONDS):
       continue
+    try:
+      prune_spool(spool_dir, state)
+    except OSError as exc:
+      cloudlog.warning("C4 diagnostics spool cleanup failed: %s", exc)
     captures = pending_captures(spool_dir, state)
     if not captures:
       stop_event.wait(UPLOAD_RETRY_SECONDS)
