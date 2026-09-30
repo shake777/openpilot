@@ -66,7 +66,7 @@ def _bool(obj, name):
 
 
 def build_scene_frame(mono_time: int, car_state, model, live_tracks, radar_state, car_control,
-                      longitudinal_plan=None) -> dict:
+                      longitudinal_plan=None, camera=None) -> dict:
   lane_lines = [_xy(line) for line in _take(model.laneLines, 4)]
   model_leads = [{
     "probability": _number(lead.prob),
@@ -101,6 +101,11 @@ def build_scene_frame(mono_time: int, car_state, model, live_tracks, radar_state
     "t_follow": _number(getattr(longitudinal_plan, "tFollow", None)) if longitudinal_plan is not None else None,
     "desired_distance": (_number(getattr(longitudinal_plan, "desiredDistance", None))
                          if longitudinal_plan is not None else None),
+    # Road-camera projection for the qcamera overlay: calib = [roll, pitch, yaw,
+    # height] (liveCalibration), cam = [width, height, focal] of the full-size
+    # road camera. The server scales to the recorded video size.
+    "calib": [_number(value) for value in camera["calib"]] if camera and camera.get("calib") else None,
+    "cam": [_number(value) for value in camera["cam"]] if camera and camera.get("cam") else None,
   }
 
 

@@ -149,6 +149,7 @@ class TestRadarCapture(unittest.TestCase):
       SimpleNamespace(leadOne=lead, leadTwo=lead),
       SimpleNamespace(longActive=True, enabled=True, actuators=SimpleNamespace(accel=-0.5)),
       SimpleNamespace(tFollow=1.1, desiredDistance=16.5),
+      {"calib": [0.0, 0.02, -0.01, 1.3], "cam": [1344, 760, 1141.5]},
     )
     with tempfile.TemporaryDirectory() as temp_dir:
       writer = SceneCaptureWriter(Path(temp_dir), "capture", 1000)
@@ -162,6 +163,7 @@ class TestRadarCapture(unittest.TestCase):
     self.assertEqual(saved["target_accel"], -0.5)
     self.assertEqual((saved["a_ego"], saved["brake_pressed"], saved["left_blindspot"]), (-0.3, True, True))
     self.assertEqual((saved["t_follow"], saved["desired_distance"]), (1.1, 16.5))
+    self.assertEqual((saved["calib"], saved["cam"]), ([0.0, 0.02, -0.01, 1.3], [1344, 760, 1141.5]))
 
   def test_scene_capture_tolerates_missing_optional_fields(self):
     xy = SimpleNamespace(x=IntegerOnlyList([0.0]), y=IntegerOnlyList([0.0]))
@@ -177,6 +179,7 @@ class TestRadarCapture(unittest.TestCase):
     self.assertIsNone(frame["a_ego"])
     self.assertIsNone(frame["t_follow"])
     self.assertIsNone(frame["left_blindspot"])
+    self.assertIsNone(frame["calib"])
 
   def test_upload_includes_scene_companion(self):
     with tempfile.TemporaryDirectory() as temp_dir:

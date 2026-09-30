@@ -10,6 +10,7 @@ from openpilot.cereal import log
 import openpilot.cereal.messaging as messaging
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
+from openpilot.common.transformations.camera import DEVICE_CAMERAS
 from tools.c4_diagnostics.auto_upload import load_or_start_state, pending_captures, upload_one
 from tools.c4_diagnostics.can_inventory import CanInventoryWriter
 from tools.c4_diagnostics.parked_probe import summarize_last_once
@@ -33,6 +34,24 @@ DATA_BUNDLE_MAX_SECONDS = 20.0
 SCENE_SERVICES = ("carState", "modelV2", "liveTracks", "radarState", "carControl")
 # Optional: scenes are still written before the first plan arrives.
 PLAN_SERVICE = "longitudinalPlan"
+CAMERA_SERVICES = ("liveCalibration", "roadCameraState")
+DEFAULT_CAMERA_HEIGHT_M = 1.22
+
+
+def scene_camera(sm):
+  """Road-camera calibration and intrinsics for the server-side video overlay."""
+  camera = {}
+  if sm.seen["liveCalibration"]:
+    calib = sm["liveCalibration"]
+    rpy = list(calib.rpyCalib)
+    if len(rpy) == 3:
+      height = float(calib.height[0]) if len(calib.height) else DEFAULT_CAMERA_HEIGHT_M
+      camera["calib"] = [*rpy, height]
+  if sm.seen["roadCameraState"] and sm.seen["deviceState"]:
+    config = DEVICE_CAMERAS.get((str(sm["deviceState"].deviceType), str(sm["roadCameraState"].sensor)))
+    if config is not None:
+      camera["cam"] = [config.fcam.width, config.fcam.height, config.fcam.focal_length]
+  return camera
 
 
 def read_source_id(config) -> str | None:
@@ -140,7 +159,8 @@ def main() -> None:
   sendcan_sock = messaging.sub_sock("sendcan", conflate=False)
   qroad_sock = messaging.sub_sock("qRoadEncodeData", conflate=False)
   pending_diagnostics = deque(maxlen=MAX_PENDING_DIAGNOSTICS)
-  sm = messaging.SubMaster(["deviceState", "carState", "modelV2", "liveTracks", "radarState", "carControl", PLAN_SERVICE])
+  sm = messaging.SubMaster(["deviceState", "carState", "modelV2", "liveTracks", "radarState", "carControl", PLAN_SERVICE,
+                            *CAMERA_SERVICES])
   writer = None
   scene_writer = None
   inventory_writer = None
@@ -199,7 +219,7 @@ def main() -> None:
       if scene_writer is not None and monotonic_now >= next_scene_time and scene_ready(sm):
         scene_writer.append(build_scene_frame(
           time.monotonic_ns(), sm["carState"], sm["modelV2"], sm["liveTracks"], sm["radarState"], sm["carControl"],
-          sm[PLAN_SERVICE] if sm.seen[PLAN_SERVICE] else None,
+          sm[PLAN_SERVICE] if sm.seen[PLAN_SERVICE] else None, scene_camera(sm),
         ))
         next_scene_time = monotonic_now + SCENE_INTERVAL_SECONDS
 
