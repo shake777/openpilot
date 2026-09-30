@@ -150,6 +150,7 @@ class TestRadarCapture(unittest.TestCase):
       SimpleNamespace(longActive=True, enabled=True, actuators=SimpleNamespace(accel=-0.5)),
       SimpleNamespace(tFollow=1.1, desiredDistance=16.5),
       {"calib": [0.0, 0.02, -0.01, 1.3], "cam": [1344, 760, 1141.5]},
+      {"PathOffset": 0.0, "CameraYawTrimDeg": -10.0},
     )
     with tempfile.TemporaryDirectory() as temp_dir:
       writer = SceneCaptureWriter(Path(temp_dir), "capture", 1000)
@@ -164,6 +165,7 @@ class TestRadarCapture(unittest.TestCase):
     self.assertEqual((saved["a_ego"], saved["brake_pressed"], saved["left_blindspot"]), (-0.3, True, True))
     self.assertEqual((saved["t_follow"], saved["desired_distance"]), (1.1, 16.5))
     self.assertEqual((saved["calib"], saved["cam"]), ([0.0, 0.02, -0.01, 1.3], [1344, 760, 1141.5]))
+    self.assertEqual(saved["settings"], {"PathOffset": 0.0, "CameraYawTrimDeg": -10.0})
 
   def test_scene_capture_tolerates_missing_optional_fields(self):
     xy = SimpleNamespace(x=IntegerOnlyList([0.0]), y=IntegerOnlyList([0.0]))
@@ -180,6 +182,7 @@ class TestRadarCapture(unittest.TestCase):
     self.assertIsNone(frame["t_follow"])
     self.assertIsNone(frame["left_blindspot"])
     self.assertIsNone(frame["calib"])
+    self.assertNotIn("settings", frame)
 
   def test_prune_spool_removes_oldest_uploaded_bundles_first(self):
     from tools.c4_diagnostics.auto_upload import prune_spool

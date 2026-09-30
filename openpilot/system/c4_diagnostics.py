@@ -36,6 +36,20 @@ SCENE_SERVICES = ("carState", "modelV2", "liveTracks", "radarState", "carControl
 # Optional: scenes are still written before the first plan arrives.
 PLAN_SERVICE = "longitudinalPlan"
 CAMERA_SERVICES = ("liveCalibration", "roadCameraState")
+# Lateral settings recorded for the server's lane-centering recommendations.
+SCENE_SETTING_KEYS = ("UseLaneLineSpeed", "PathOffset", "CameraYawTrimDeg", "AdjustLaneOffset", "SteerActuatorDelay",
+                      "LatSmoothSec", "CustomSR", "LatMpcPathCost", "LatMpcInputOffset")
+SCENE_SETTINGS_EVERY_FRAMES = 50
+
+
+def scene_settings(params):
+  values = {}
+  for key in SCENE_SETTING_KEYS:
+    try:
+      values[key] = params.get_float(key)
+    except Exception:
+      continue
+  return values
 DEFAULT_CAMERA_HEIGHT_M = 1.22
 
 
@@ -181,6 +195,8 @@ def main() -> None:
   can_ring = TimeRing()
   scene_ring = TimeRing()
   detector = EventDetector()
+  params = Params()
+  scene_count = 0
   next_scene_time = time.monotonic()
   try:
     while not stop_event.is_set():
@@ -239,7 +255,9 @@ def main() -> None:
         scene_frame = build_scene_frame(
           scene_mono, sm["carState"], sm["modelV2"], sm["liveTracks"], sm["radarState"], sm["carControl"],
           sm[PLAN_SERVICE] if sm.seen[PLAN_SERVICE] else None, scene_camera(sm),
+          scene_settings(params) if scene_count % SCENE_SETTINGS_EVERY_FRAMES == 0 else None,
         )
+        scene_count += 1
         next_scene_time = monotonic_now + SCENE_INTERVAL_SECONDS
         if scene_writer is not None:
           scene_writer.append(scene_frame)
