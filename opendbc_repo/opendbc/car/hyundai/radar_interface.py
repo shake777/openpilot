@@ -20,6 +20,12 @@ from opendbc.car.hyundai.radar_classic_238 import (
 )
 
 SCC_TID = 0
+# Mode 5: a radar that also sends stock SCC11/SCC12 (e.g. wired behind the C4) is followed
+# through SCC once SCC11 has arrived continuously for this long; 0x238 objects then stay
+# reference-only (display/recording). A gap longer than CLASSIC_238_SCC_MAX_GAP_NS
+# returns control to the 0x238 objects.
+CLASSIC_238_SCC_MIN_LIVE_NS = 1_000_000_000
+CLASSIC_238_SCC_MAX_GAP_NS = 300_000_000
 RADAR_START_ADDR = 0x500
 RADAR_MSG_COUNT = 64
 RADAR_REQUIRED_MSG_COUNT = 32
@@ -318,7 +324,7 @@ class RadarInterface(RadarInterfaceBase):
     self.rcp_corner_objects_430 = get_corner_object_430_can_parser(CP, self.corner_object_430_tracks)
     # Enabling raw radar tracks on legacy CAN disables the stock SCC11 stream on
     # some Hyundai/Kia platforms. Camera-SCC cars may still use SCC11.
-    use_scc_parser = not (self.radar_tracks and not self.canfd and not (CP.flags & HyundaiFlags.CAMERA_SCC))
+    use_scc_parser = self.classic_238 or not (self.radar_tracks and not self.canfd and not (CP.flags & HyundaiFlags.CAMERA_SCC))
     self.rcp_scc = get_radar_can_parser_scc(CP) if use_scc_parser else None
     self.trigger_msg_scc = 416 if self.canfd else 0x420
 
@@ -356,6 +362,8 @@ class RadarInterface(RadarInterfaceBase):
     self.classic_238_last_frame_ns = 0
     self.classic_238_latest_ns = 0
     self.classic_238_invalid = False
+    self.classic_238_scc_since_ns = 0
+    self.classic_238_scc_last_ns = 0
 
     # Initialize pts
     if self.rcp_tracks is not None:
@@ -406,6 +414,8 @@ class RadarInterface(RadarInterfaceBase):
     if self.rcp_scc is not None:
       vls_s = self.rcp_scc.update(can_strings)
       self.updated_scc.update(vls_s)
+      if self.classic_238 and self.trigger_msg_scc in vls_s:
+        self._note_classic_238_scc(can_strings)
 
     track_ready = False
     if self.radar_tracks and self.rcp_tracks is not None:
@@ -463,6 +473,8 @@ class RadarInterface(RadarInterfaceBase):
 
     if self.rcp_scc is not None:
       self._update_scc(self.updated_scc)
+      if self.classic_238 and not self.classic_238_scc_live():
+        self.pts[SCC_TID].measured = False
     if self.rcp_corner_objects is not None:
       if self.updated_corner_objects:
         self._update_corner_objects(self.updated_corner_objects)
@@ -499,13 +511,34 @@ class RadarInterface(RadarInterfaceBase):
     ret = structs.RadarData()
     if (classic_238_error or
         (self.rcp_tracks is not None and self.radar_tracks and not self.rcp_tracks.can_valid) or
-        (self.rcp_scc is not None and not self.corner_objects_available and not self.rcp_scc.can_valid) or
+        (self.rcp_scc is not None and not self.classic_238 and not self.corner_objects_available
+         and not self.rcp_scc.can_valid) or
         (self.rcp_corner_objects is not None and not self.rcp_corner_objects.can_valid) or
         (self.rcp_corner_objects_180 is not None and not self.rcp_corner_objects_180.can_valid) or
         (self.rcp_corner_objects_430 is not None and not self.rcp_corner_objects_430.can_valid)):
       ret.errors.canError = True
-    ret.points = [point for point in self.pts.values() if point.measured]
+    # The radar's own live SCC lead drives control; 0x238 objects are then reference only.
+    # (Assign once: re-filtering ret.points would read back the capnp list just replaced.)
+    scc_only = self.classic_238 and self.classic_238_scc_live()
+    ret.points = [point for point in self.pts.values()
+                  if point.measured and not (scc_only and point.trackId >= CLASSIC_238_TRACK_ID_OFFSET)]
     return ret
+
+  def _note_classic_238_scc(self, can_packets):
+    if can_packets and not isinstance(can_packets[0], list | tuple):
+      can_packets = [can_packets]
+    packet_ns = max((packet[0] for packet in can_packets), default=0)
+    if not packet_ns:
+      return
+    if not self.classic_238_scc_last_ns or packet_ns - self.classic_238_scc_last_ns > CLASSIC_238_SCC_MAX_GAP_NS:
+      self.classic_238_scc_since_ns = packet_ns
+    self.classic_238_scc_last_ns = packet_ns
+
+  def classic_238_scc_live(self) -> bool:
+    now_ns = max(self.classic_238_latest_ns, self.classic_238_scc_last_ns)
+    return bool(self.classic_238_scc_last_ns
+                and now_ns - self.classic_238_scc_last_ns <= CLASSIC_238_SCC_MAX_GAP_NS
+                and self.classic_238_scc_last_ns - self.classic_238_scc_since_ns >= CLASSIC_238_SCC_MIN_LIVE_NS)
 
   def _receive_classic_238(self, can_packets):
     if can_packets and not isinstance(can_packets[0], list | tuple):

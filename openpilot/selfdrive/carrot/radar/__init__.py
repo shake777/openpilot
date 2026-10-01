@@ -26,3 +26,15 @@ def radar_lead_comfort_extras_enabled(brand: str, classic_238: bool = False) -> 
   kept gaps long, then released into catch-up acceleration and braking.
   """
   return not (brand == "hyundai" and classic_238)
+
+
+def classic_238_track_mode(configured_mode: int, points) -> int:
+  """Mode 5 follows the radar's own SCC11 lead (like mode 0) while it is published.
+
+  RadarInterface publishes the SCC point only after SCC11 has been live for 1 s and then
+  withholds the 0x238 objects, which stay reference-only. Otherwise the 0x238 objects
+  are matched as front radar (configured mode).
+  """
+  if any(str(point.radarSource) == "scc" and point.measured for point in points):
+    return 0
+  return configured_mode
