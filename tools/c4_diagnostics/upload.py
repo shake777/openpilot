@@ -37,6 +37,9 @@ class UploadConfig:
   site: str = ""
   software_version: str = ""
   note: str = "K7 radar observation capture"
+  # Optional C4-only web account (ID only, never a password); the server links this
+  # C4's serial to that account on upload.
+  account: str = ""
   spool_dir: str = "/data/c4-diagnostics/spool"
   state_path: str = "/data/c4-diagnostics/state.json"
 
@@ -80,6 +83,7 @@ def load_config(path: Path | None = None) -> UploadConfig:
     site=str(setting("C4_DIAGNOSTICS_SITE", "site", "")),
     software_version=str(setting("C4_DIAGNOSTICS_SOFTWARE_VERSION", "software_version", "")),
     note=str(setting("C4_DIAGNOSTICS_NOTE", "note", "K7 radar observation capture")),
+    account=str(setting("C4_DIAGNOSTICS_ACCOUNT", "account", "")).strip(),
     spool_dir=str(setting("C4_DIAGNOSTICS_SPOOL_DIR", "spool_dir", "/data/c4-diagnostics/spool")),
     state_path=str(setting("C4_DIAGNOSTICS_STATE_PATH", "state_path", "/data/c4-diagnostics/state.json")),
   )

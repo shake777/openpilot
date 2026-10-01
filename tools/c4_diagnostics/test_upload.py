@@ -88,3 +88,20 @@ class TestC4DiagnosticsUpload(unittest.TestCase):
 
 if __name__ == "__main__":
   unittest.main()
+
+
+class TestAccountConfig(unittest.TestCase):
+  def test_account_id_from_config_file_is_sent_and_empty_is_omitted(self):
+    import json
+    import os
+    import tempfile
+    from pathlib import Path
+    from tools.c4_diagnostics.upload import load_config
+    with tempfile.TemporaryDirectory() as directory:
+      path = Path(directory) / "c4-diagnostics.json"
+      path.write_text(json.dumps({"api_key": "k" * 32, "account": " CARROT "}), encoding="utf-8")
+      if os.name != "nt":
+        path.chmod(0o600)
+      self.assertEqual(load_config(path).account, "CARROT")
+      path.write_text(json.dumps({"api_key": "k" * 32}), encoding="utf-8")
+      self.assertEqual(load_config(path).account, "")
