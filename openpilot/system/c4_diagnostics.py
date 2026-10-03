@@ -19,7 +19,7 @@ from tools.c4_diagnostics.qcamera_capture import (
   plan_bundle_start,
 )
 from tools.c4_diagnostics.event_capture import EVENT_POST_SECONDS, EventDetector, TimeRing, write_event_companion
-from tools.c4_diagnostics.radar_capture import MAX_PENDING_DIAGNOSTICS, RadarCaptureWriter, capture_can_frame, is_radar_address
+from tools.c4_diagnostics.radar_capture import MAX_PENDING_DIAGNOSTICS, OtherRadarThrottle, RadarCaptureWriter, capture_can_frame
 from tools.c4_diagnostics.scene_capture import SceneCaptureWriter, build_scene_frame
 from tools.c4_diagnostics.upload import UploadError, load_config
 
@@ -210,6 +210,7 @@ def main() -> None:
   bundle_event = None
   # Last 15 s of radar CAN and scene frames, written first when an event starts a bundle.
   can_ring = TimeRing()
+  ring_throttle = OtherRadarThrottle()
   scene_ring = TimeRing()
   detector = EventDetector()
   params = Params()
@@ -252,7 +253,7 @@ def main() -> None:
       message = messaging.recv_one_or_none(can_sock)
       if message is not None:
         for frame in message.can:
-          if onroad and is_radar_address(frame.address, frame.src):
+          if onroad and ring_throttle.allow(message.logMonoTime, frame.address, frame.src):
             can_ring.push(message.logMonoTime, (message.logMonoTime, frame.address, frame.src, bytes(frame.dat)))
           if inventory_writer is not None:
             inventory_writer.append(message.logMonoTime, frame.address, frame.src, bytes(frame.dat))

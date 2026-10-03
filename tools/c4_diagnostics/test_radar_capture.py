@@ -68,6 +68,7 @@ class TestRadarCapture(unittest.TestCase):
       self.assertTrue(writer.append(124, 0x238, 1, b"classic!"))
       self.assertTrue(writer.append(125, 0x420, 0, b"scc-data"))
       self.assertFalse(writer.append(126, 0x123, 0, b"ignored"))
+      self.assertFalse(writer.append(127, 0x123, 2, b"ignored"))
       capture = writer.finalize()
       self.assertIsNotNone(capture)
       self.assertEqual(list(iter_records(capture)), [
@@ -88,6 +89,18 @@ class TestRadarCapture(unittest.TestCase):
       capture = writer.finalize()
       self.assertEqual([(address, source) for _, address, source, _ in iter_records(capture)],
                        [(0x202, 1), (0x25A, 1), (0x26E, 1), (0x690, 1), (0x240, 1), (0x420, 128)])
+
+  def test_other_radar_bus_frames_are_kept_at_five_hz(self):
+    with tempfile.TemporaryDirectory() as temp_dir:
+      writer = RadarCaptureWriter(Path(temp_dir), wall_time=1000)
+      # 0x3A0 is not a K7 radar address: another car's radar signal on bus 1.
+      kept = [writer.append(t * 50_000_000, 0x3A0, 1, b"otherrdr") for t in range(10)]
+      self.assertEqual(kept, [True, False, False, False, True, False, False, False, True, False])
+      # Known K7 radar frames are never throttled.
+      self.assertTrue(all(writer.append(t, 0x238, 1, b"classic!") for t in range(5)))
+      self.assertFalse(writer.append(0, 0x3A0, 0, b"bus0 ign"))
+      self.assertEqual(writer.records, 8)
+      writer.finalize()
 
   def test_empty_capture_is_removed(self):
     with tempfile.TemporaryDirectory() as temp_dir:
