@@ -15,6 +15,10 @@ from openpilot.selfdrive.controls.lib.cutin_predecel import (
   apply_cutin_predecel_accel_limit,
   get_cutin_predecel_accel_limit,
 )
+from openpilot.selfdrive.controls.lib.closing_lead_accel import (
+  apply_closing_lead_accel_limit,
+  get_closing_lead_accel_limit,
+)
 from openpilot.selfdrive.controls.lib.longitudinal_preview import (
   apply_preview_target,
   clip_preview_offset,
@@ -228,6 +232,15 @@ class LongitudinalPlanner:
       self.a_desired,
       cutin_predecel_limit,
     )
+
+    # K7 mode 5: no catch-up acceleration toward a slower lead (only removes acceleration).
+    if (not self.radar_comfort_extras and not reset_state and not sm['carState'].gasPressed
+        and not carrot.lane_change_active):
+      accel_limits_turns[1] = apply_closing_lead_accel_limit(
+        accel_limits_turns[1],
+        self.a_desired,
+        get_closing_lead_accel_limit(sm['radarState'].leadOne, v_ego, accel_limits_turns[1]),
+      )
 
     lead_track_frames = self.update_lead_tracks(sm['radarState'])
     # Response strength is a driver preference at every following-distance level.
