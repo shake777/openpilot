@@ -71,6 +71,11 @@ class RadarLeadInfo:
 
 
 
+# A classic 0x238 object this close to a displayed lead is the same object.
+CLASSIC_LABEL_MATCH_D_M = 3.0
+CLASSIC_LABEL_MATCH_Y_M = 1.5
+
+
 class ModelRenderer(Widget):
   def __init__(self):
     super().__init__()
@@ -1127,11 +1132,22 @@ class ModelRenderer(Widget):
     lane_x = np.array(lane_line.x, dtype=np.float32)
     lane_z = np.array(lane_line.z, dtype=np.float32)
 
+    # Objects already shown as a lead (box with distance) or as a radar-info speed box keep
+    # only a small dot, so their ID/speed text does not overlap those labels.
+    shown = []
+    if sm.valid['radarState']:
+      radar_state = sm['radarState']
+      shown = [(float(lead.dRel), float(lead.yRel)) for lead in (radar_state.leadOne, radar_state.leadTwo) if lead.status]
+      if self._carrot_show_radar_info > 0:
+        shown += [(float(lead.dRel), float(lead.yRel))
+                  for group in (radar_state.leadsLeft, radar_state.leadsRight, radar_state.leadsCenter) for lead in group]
+
     for point in sm['classicRadarTracks'].points:
       d_rel = float(point.dRel)
       y_rel = float(point.yRel)
       if not 2.5 < d_rel <= 250.0 or abs(y_rel) > 20.0:
         continue
+      duplicate = any(abs(d_rel - d) < CLASSIC_LABEL_MATCH_D_M and abs(y_rel - y) < CLASSIC_LABEL_MATCH_Y_M for d, y in shown)
       idx = self._get_path_length_idx(lane_x, d_rel)
       if idx >= len(lane_z):
         continue
@@ -1142,6 +1158,9 @@ class ModelRenderer(Widget):
       x, y = int(side[0]), int(side[1])
       confirmed = int(point.trackState) == 2
       color = rl.Color(53, 224, 193, 230) if confirmed else rl.Color(125, 135, 146, 230)
+      if duplicate:
+        rl.draw_circle(x, y, 5.0, color)
+        continue
       rl.draw_circle(x, y, 9.0, color)
       # trackId is the radar's own object ID (0-63); larger values mean unknown.
       # The number after it is the object's ground speed (km/h or mph).
