@@ -127,7 +127,7 @@ class TestRadarCapture(unittest.TestCase):
                                  v=IntegerOnlyList([8.0]), a=IntegerOnlyList([-0.1]))
     frame = build_scene_frame(
       123,
-      SimpleNamespace(vEgo=10.0, steeringAngleDeg=2.0, aEgo=-0.3, gasPressed=False, brakePressed=True,
+      SimpleNamespace(vEgo=10.0, vCruise=60.0, steeringAngleDeg=2.0, aEgo=-0.3, gasPressed=False, brakePressed=True,
                       standstill=False, steeringPressed=False, leftBlindspot=True, rightBlindspot=False),
       SimpleNamespace(position=xy, laneLines=IntegerOnlyList([xy] * 4),
                       laneLineProbs=IntegerOnlyList([0.9] * 4), leadsV3=IntegerOnlyList([model_lead])),
@@ -152,6 +152,7 @@ class TestRadarCapture(unittest.TestCase):
     self.assertEqual((saved["t_follow"], saved["desired_distance"]), (1.1, 16.5))
     self.assertEqual((saved["calib"], saved["cam"]), ([0.0, 0.02, -0.01, 1.3], [1344, 760, 1141.5]))
     self.assertEqual(saved["settings"], {"PathOffset": 0.0, "CameraYawTrimDeg": -10.0})
+    self.assertEqual(saved["v_cruise"], 60.0)
 
   def test_scene_capture_tolerates_missing_optional_fields(self):
     xy = SimpleNamespace(x=IntegerOnlyList([0.0]), y=IntegerOnlyList([0.0]))

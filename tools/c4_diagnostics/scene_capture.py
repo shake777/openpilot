@@ -78,6 +78,8 @@ def build_scene_frame(mono_time: int, car_state, model, live_tracks, radar_state
   return {
     "t": int(mono_time),
     "v_ego": _number(car_state.vEgo),
+    # Set speed (km/h); lets the server tell a long gap caused by the cruise speed cap apart.
+    "v_cruise": _number(getattr(car_state, "vCruise", None)),
     "steering_angle_deg": _number(car_state.steeringAngleDeg),
     "points": [_radar_point(point) for point in _take(live_tracks.points, 64)],
     "path": _xy(model.position),
