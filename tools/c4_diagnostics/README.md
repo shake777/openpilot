@@ -4,6 +4,8 @@ This standalone client uploads one to eight C4 diagnostic files to the dedicated
 
 ## Private configuration
 
+Without a configuration file (or without `api_key`) the C4 runs keyless: it identifies itself by the hardware serial and starts capturing and uploading only after the DAYOU administrator links that serial to a C4 account and approves keyless upload; until then it only rechecks registration every 10 minutes. A configured key keeps the previous behavior.
+
 Create `/data/c4-diagnostics.json` on the C4 and restrict it to the device owner with mode `0600`.
 
 ```json

@@ -21,11 +21,12 @@ from tools.c4_diagnostics.qcamera_capture import (
 from tools.c4_diagnostics.event_capture import EVENT_POST_SECONDS, EventDetector, TimeRing, write_event_companion
 from tools.c4_diagnostics.radar_capture import MAX_PENDING_DIAGNOSTICS, OtherRadarThrottle, RadarCaptureWriter, capture_can_frame
 from tools.c4_diagnostics.scene_capture import SceneCaptureWriter, build_scene_frame
-from tools.c4_diagnostics.upload import UploadError, load_config
+from tools.c4_diagnostics.upload import UploadError, is_registered, load_config
 
 
 NetworkType = log.DeviceState.NetworkType
 CONFIG_RETRY_SECONDS = 60
+REGISTRATION_RETRY_SECONDS = 600
 UPLOAD_RETRY_SECONDS = 15
 SCENE_INTERVAL_SECONDS = 0.1
 # Video bundles keep the existing ~40-60 s window. The data-only bundle between
@@ -89,10 +90,14 @@ def scene_camera(sm):
 def read_source_id(config) -> str | None:
   if config.source_id:
     return config.source_id
-  value = Params().get("DongleId")
-  if isinstance(value, bytes):
-    value = value.decode("utf-8", errors="replace")
-  return value or None
+  # Keyless C4s are registered by the hardware serial shown in the device settings.
+  for key in (("DongleId",) if config.api_key else ("HardwareSerial", "DongleId")):
+    value = Params().get(key)
+    if isinstance(value, bytes):
+      value = value.decode("utf-8", errors="replace")
+    if value:
+      return value
+  return None
 
 
 def write_meminfo(capture: Path) -> None:
@@ -135,9 +140,14 @@ def wait_for_config(stop_event: threading.Event):
     try:
       config = load_config()
       source_id = read_source_id(config)
-      if source_id:
+      if not source_id:
+        cloudlog.warning("C4 diagnostics source_id is not configured")
+      elif config.api_key or is_registered(config, source_id):
         return config, source_id
-      cloudlog.warning("C4 diagnostics source_id is not configured")
+      else:
+        # Not approved yet: neither capture nor upload; ask again later.
+        stop_event.wait(REGISTRATION_RETRY_SECONDS)
+        continue
     except UploadError as exc:
       cloudlog.warning("C4 diagnostics is inactive: %s", exc)
     stop_event.wait(CONFIG_RETRY_SECONDS)

@@ -91,6 +91,14 @@ if __name__ == "__main__":
 
 
 class TestAccountConfig(unittest.TestCase):
+  def test_keyless_config_and_registration_url(self):
+    from tools.c4_diagnostics.upload import load_config, registration_url
+    with tempfile.TemporaryDirectory() as temp_dir:
+      config = load_config(Path(temp_dir) / "missing.json")
+    self.assertEqual(config.api_key, "")
+    self.assertEqual(registration_url(config, "451fa010"),
+                     "https://www.dayoutec.com/c4-diagnostics/api/v1/registered?source_id=451fa010")
+
   def test_account_id_from_config_file_is_sent_and_empty_is_omitted(self):
     import json
     import os
