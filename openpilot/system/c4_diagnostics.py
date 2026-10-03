@@ -13,6 +13,7 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.common.transformations.camera import DEVICE_CAMERAS
 from tools.c4_diagnostics.auto_upload import load_or_start_state, pending_captures, prune_spool, upload_one
 from tools.c4_diagnostics.can_inventory import CanInventoryWriter
+from tools.c4_diagnostics.parked_probe import summarize_last_once
 from tools.c4_diagnostics.qcamera_capture import (
   QCameraCaptureWriter,
   plan_bundle_start,
@@ -180,6 +181,11 @@ def main() -> None:
   state_path = Path(config.state_path)
   state = load_or_start_state(state_path)
 
+  try:
+    summarize_last_once(spool_dir)
+  except (OSError, ValueError) as exc:
+    cloudlog.warning("C4 saved diagnostic summary failed: %s", exc)
+
   network_online = threading.Event()
   uploader = threading.Thread(
     target=upload_loop,
@@ -189,6 +195,7 @@ def main() -> None:
   uploader.start()
 
   can_sock = messaging.sub_sock("can", conflate=False, timeout=1000)
+  sendcan_sock = messaging.sub_sock("sendcan", conflate=False)
   qroad_sock = messaging.sub_sock("qRoadEncodeData", conflate=False)
   pending_diagnostics = deque(maxlen=MAX_PENDING_DIAGNOSTICS)
   sm = messaging.SubMaster(["deviceState", "carState", "modelV2", "liveTracks", "radarState", "carControl", PLAN_SERVICE,
@@ -250,6 +257,10 @@ def main() -> None:
           if inventory_writer is not None:
             inventory_writer.append(message.logMonoTime, frame.address, frame.src, bytes(frame.dat))
           capture_can_frame(writer, pending_diagnostics, message.logMonoTime, frame.address, frame.src, bytes(frame.dat))
+      for sent in messaging.drain_sock(sendcan_sock, wait_for_one=False):
+        for frame in sent.sendcan:
+          if frame.address == 0x7D0:
+            capture_can_frame(writer, pending_diagnostics, sent.logMonoTime, frame.address, frame.src, bytes(frame.dat))
 
       for encoded in messaging.drain_sock(qroad_sock, wait_for_one=False):
         if video_writer is not None and not video_writer.complete():
