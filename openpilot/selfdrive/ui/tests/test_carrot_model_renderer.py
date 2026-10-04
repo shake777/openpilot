@@ -319,6 +319,19 @@ def test_classic_track_matching_a_lead_keeps_only_a_small_dot(monkeypatch):
   assert circles == [5.0, 9.0]
   assert texts == ["9 36"]
 
+  # A label that would cover another distance/speed label moves below the dot, or is skipped.
+  lead.status = False
+  data["classicRadarTracks"].points = [point(9, 60.0, 3.5)]
+  x, y = 103.5, 440.0
+  texts.clear()
+  renderer._carrot_label_rects = [(x - 30, y - 24 - 10, 60, 20)]
+  renderer._draw_classic_radar_tracks_carrot(SM())
+  assert texts == ["9 36"] and renderer._carrot_label_rects[-1][1] == y + 24 - 15
+  texts.clear()
+  renderer._carrot_label_rects = [(x - 30, y - 24 - 10, 60, 20), (x - 30, y + 24 - 10, 60, 20)]
+  renderer._draw_classic_radar_tracks_carrot(SM())
+  assert texts == []
+
 
 def test_render_stale_data_skips_overlays(monkeypatch):
   renderer = object.__new__(model_renderer.ModelRenderer)
