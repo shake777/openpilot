@@ -4,6 +4,8 @@ This standalone client uploads one to eight C4 diagnostic files to the dedicated
 
 ## Private configuration
 
+Without a configuration file (or without `api_key`) the C4 runs keyless: it identifies itself by the hardware serial and starts capturing and uploading only after the DAYOU administrator links that serial to a C4 account and approves keyless upload; until then it only rechecks registration every 10 minutes. A configured key keeps the previous behavior.
+
 Create `/data/c4-diagnostics.json` on the C4 and restrict it to the device owner with mode `0600`.
 
 ```json
@@ -41,6 +43,11 @@ Up to 256 diagnostic frames observed before on-road capture starts are buffered 
 Radar CAN, synchronized scene data, and the receive-only CAN inventory are collected in bounded bundles. Periodic bundles start at the beginning of each drive and every 10 minutes of continuous on-road time; each starts with a 30-second qRoad H.264 preview and lasts up to about 60 seconds (usually about 40 seconds, about 4.6 MB). Between them, the service keeps the last 15 seconds of radar CAN and scene frames in memory and writes an event bundle (no video, about 1.5 MB) with those 15 seconds plus 5 more when a review event occurs: a driver brake press while openpilot longitudinal control is active, a commanded acceleration of -2.0 m/s^2 or less, or a stop behind a lead within 15 seconds of driving at 20 km/h or faster. Events are at least 2 minutes apart and at most 10 per hour; an event during a periodic bundle only labels that bundle. Each event bundle carries a `.c4event.json` companion with the reason. Expected load is about 28-43 MB per driving hour. Time outside bundles is not recorded. The local spool is kept under 512 MB: when it is larger, whole bundles are deleted oldest first, already-uploaded bundles before ones still waiting for upload. Each upload includes the original radar CAN capture, a bounded `.c4scene` JSON Lines companion with synchronized `liveTracks`, model path, lane, radar lead, speed, and longitudinal-control state, a bounded `.c4can.json` receive-only inventory, an optional qRoad preview with timing metadata, and a small `/proc/meminfo` snapshot. The inventory records address, bus, length, count, approximate rate, first/last payload, and the varying-bit mask for incoming CAN only; it does not transmit frames or retain every full payload. Video is copied from the existing 256 kbps qRoad encoder and does not start another camera or encoder. Collection occurs only while the car is on-road; the bounded diagnostic buffer described above may include preceding off-road frames. Completed captures upload whenever `deviceState` reports a network connection, including after the car goes off-road. Failed uploads retain the same deterministic UUID and are retried without deleting the local originals. Incomplete radar-only fragments are preserved locally and are not uploaded.
 
 There is no time limit. Capturing and uploading stop when this branch's service is no longer running, such as after switching the device back to a branch without the C4 diagnostics process.
+
+> 2026-10-03: the 6999 recovery-page buttons for these K7 tools were removed. The tools
+> remain and can be run from a terminal. The startup radar inventory runs only when the
+> device config sets `"radar_inventory": true` (default off), so C4s that only upload
+> driving data, such as other long-control cars in mode 1 or 0, never query the radar.
 
 ## Automatic read-only K7 inventory
 

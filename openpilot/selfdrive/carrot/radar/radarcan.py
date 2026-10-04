@@ -20,6 +20,9 @@ from opendbc.car.hyundai.radar_classic_238 import (
 )
 
 
+CLASSIC_DISPLAY_PERIOD_NS = 50_000_000
+
+
 def main():
   # Share core4/FIFO51 with planner. Card/radard use core5; short control/state
   # work shares core6 with camera; model/DM remain on core7.
@@ -42,6 +45,11 @@ def main():
   needs_reset = False
   replay = 'REPLAY' in os.environ
   replay_ns = last_input_ns
+  # K7 0x238 objects are shown on the web in every EnableRadarTracks mode. When the
+  # selected radar path publishes nothing (e.g. mode 1 on a car without 0x500 tracks),
+  # publish them on their own 20 Hz cadence; display only, never used for control here.
+  classic_seen = False
+  last_classic_publish_ns = 0
 
   def now():
     return replay_ns if replay else time.monotonic_ns()
@@ -63,6 +71,8 @@ def main():
       last_error_publish_ns = now_ns
 
   def publish_classic_tracks(now_ns):
+    nonlocal last_classic_publish_ns
+    last_classic_publish_ns = now_ns
     tracks = classic_tracker.current(now_ns) if classic_tracker is not None else []
     msg = messaging.new_message('classicRadarTracks')
     msg.valid = True
@@ -123,7 +133,12 @@ def main():
         for address, dat, src in frames:
           if (classic_tracker is not None and src == 1
               and CLASSIC_238_START_ADDR <= address <= CLASSIC_238_END_ADDR):
-            classic_tracker.update(packet_ns, address, dat, ego.v_ego)
+            try:
+              classic_tracker.update(packet_ns, address, dat, ego.v_ego)
+              classic_seen = True
+            except ValueError:
+              # Foreign or malformed frame in this ID range: display only, never crash.
+              classic_tracker = Classic238DisplayTracker()
       if classic_tracker is not None:
         classic_tracker.finish_scan(ego.receive_ns)
       processed += 1
@@ -137,6 +152,8 @@ def main():
         # Assignment copies the result: decoder points/filter history stay raw.
         set_radar_track_flip(msg.liveTracks, radar_track_flip)
         pm.send('liveTracks', msg)
+        publish_classic_tracks(ego.receive_ns)
+      elif classic_seen and ego.receive_ns - last_classic_publish_ns >= CLASSIC_DISPLAY_PERIOD_NS:
         publish_classic_tracks(ego.receive_ns)
     now_ns = now()
     if now_ns - min(last_input_ns, last_can_input_ns) > MAX_INPUT_AGE_NS:

@@ -13,3 +13,6 @@
 - Linux 시험 호스트는 Python 3.14.4이며 해당 호스트용 wheel이 없어 시험 의존성만 pycapnp 2.2.4를 사용했다. 생산 requirements의 2.2.2는 유지했다. native Cython/Panda 전체 빌드·C4 설치·차량 주행 검증을 대신하지 않는다.
 - 재현 도구와 의존성은 .analysis/scratch/20261005-upstream-merge/verify_linux.py 및 .analysis/scratch/20261005-upstream-merge-linux-deps에 보관한다. 기존 조사 자료를 삭제하거나 변경하지 않았다.
 - 레이더 코드가 포함되어 NAS replay 동기화도 필요하다. 원격 공개 후 기존 Carrot Routes image 자동 경로의 커밋·배포·실제 결과 재계산을 확인해야 하며 아직 실행하지 않았다.
+- 사용자가 원격 푸시와 NAS 반영을 추가 승인했다. C4 기기 설치는 이번 작업에서 제외한다.
+- 푸시 전 origin/carrot-wip-custom을 갱신하니 로컬 전용 7개·원격 전용 18개 커밋이 있었다. 원격의 추가 K7·업로드 수정도 보존하기 위해 먼저 병합한다.
+- 추가 병합의 설정 설명 충돌은 최신 K7 모드 5의 SCC11/12 수신 시 추종 설명을 보존해 해결했다. Linux 레이더·종방향·NAS replay 회귀 754개와 Windows 조향·UI·문서 회귀 71개가 통과했다. 두 실행에는 중복 항목이 있다.

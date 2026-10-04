@@ -547,12 +547,13 @@ class TestK7Classic238RadarMode:
         radar_data = updated
     return radar_data
 
-  def test_mode5_uses_classic_stream_without_legacy_or_scc_parsers(self, monkeypatch):
+  def test_mode5_uses_classic_stream_without_legacy_parser(self, monkeypatch):
     radar_interface = self.make_interface(monkeypatch)
     assert radar_interface.classic_238
     assert radar_interface.radar_tracks
     assert radar_interface.rcp_tracks is None
-    assert radar_interface.rcp_scc is None
+    # SCC11 is only watched; its absence (as on an openpilot-longitudinal K7) is not an error.
+    assert radar_interface.rcp_scc is not None
     assert not radar_interface.radar_off_can
 
     radar_data = self.publish(radar_interface, 1_000_000_000, {0: {}, 1: {"status": 1, "d_rel": 30.0}})
@@ -623,21 +624,28 @@ class TestK7Classic238RadarMode:
     assert not radar_data.errors.canError
     assert [p.trackId for p in radar_data.points] == [4000]
 
-  def test_mode5_keeps_stock_scc_point_with_camera_scc_wiring(self, monkeypatch):
-    # Radar wired behind the C4 (HyundaiCameraSCC): SCC11 arrives on bus 2 next to the 0x238 stream.
-    radar_interface = self.make_interface(monkeypatch, flags=HyundaiFlags.CAMERA_SCC.value)
+  @pytest.mark.parametrize(("flags", "bus"), ((HyundaiFlags.CAMERA_SCC.value, 2), (0, 0)))
+  def test_mode5_follows_live_radar_scc_and_keeps_0x238_as_reference(self, monkeypatch, flags, bus):
+    # A radar that also sends SCC11 (wired behind the C4 or on the PT bus) is followed through SCC
+    # after 1 s of continuous SCC11; until then, and after SCC11 stops, the 0x238 objects are used.
+    radar_interface = self.make_interface(monkeypatch, flags=flags)
     assert radar_interface.classic_238 and radar_interface.rcp_scc is not None
     packer = CANPacker(radar_interface_module.DBC[CAR.KIA_K7_PE][Bus.pt])
-    scc11 = packer.make_can_msg("SCC11", 2, {"ACC_ObjStatus": 1, "ACC_ObjDist": 20.0, "ACC_ObjRelSpd": 0.0})
+    scc11 = packer.make_can_msg("SCC11", bus, {"ACC_ObjStatus": 1, "ACC_ObjDist": 20.0, "ACC_ObjRelSpd": 0.0})
     published = []
-    for index in range(15):
-      frames = self.scan(index % 4, {0: {}}) + [scc11]
+    for index in range(60):
+      frames = self.scan(index % 4, {0: {}}) + ([scc11] if index < 45 else [])
       updated = radar_interface.update([1_000_000_000 + index * self.SCAN_NS, frames])
       if updated is not None:
-        published.append(updated)
-    assert len(published) == 3
-    track_ids = {point.trackId for point in published[-1].points}
-    assert 4000 in track_ids and 0 in track_ids
+        # Points are reused between cycles: snapshot them when published.
+        published.append((index, updated.errors.canError,
+                          {point.trackId: (str(point.radarSource), point.dRel) for point in updated.points}))
+    points = {index: snapshot for index, _, snapshot in published}
+    assert set(points[4]) == {4000}                         # SCC11 not yet continuous for 1 s
+    assert set(points[39]) == {0} and set(points[44]) == {0}  # live SCC lead; 0x238 reference-only
+    assert points[44][0][0] == "scc" and points[44][0][1] == pytest.approx(20.0)
+    assert set(points[59]) == {4000}                        # SCC11 gone > 0.3 s: back to 0x238
+    assert not any(error for _, error, _ in published)
 
   def test_mode5_without_classic_detection_behaves_like_mode0(self, monkeypatch):
     radar_interface = self.make_interface(monkeypatch, classic_flag=False)

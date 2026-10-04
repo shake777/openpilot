@@ -331,7 +331,11 @@ CLASSIC_238_TENTATIVE_MAX_ABS_Y_REL_M = 1.2
 # vision within 0.5 m below 10 m (stopped and moving) and held steadier stop gaps.
 CLASSIC_238_MIN_D_REL_M = 3.0
 CLASSIC_238_MAX_D_REL_M = 200.0
-CLASSIC_238_MAX_ABS_Y_REL_M = 2.0
+# Confirmed objects in the adjacent lanes are passed on as well so radard can follow a
+# merging car's lateral motion and raise its cut-in risk before it reaches the lane.
+# A +/-2.0 m gate hid a 70 km/h merge at 13 m until it was 1.9 m from the centre
+# (2026-10-01); radard's own path/vision matching still decides leadOne.
+CLASSIC_238_MAX_ABS_Y_REL_M = 4.5
 # Oncoming and turning traffic at intersections reports negative ground speed.
 CLASSIC_238_MIN_V_LEAD_MS = -1.0
 

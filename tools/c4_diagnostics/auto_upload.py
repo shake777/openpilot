@@ -124,6 +124,7 @@ def upload_one(config: UploadConfig, source_id: str, state: dict, state_path: Pa
     "software_version": config.software_version,
     "collected_at": collected_at,
     "note": config.note,
+    "account": getattr(config, "account", ""),
   })
   state["uploaded"][capture.name] = {
     "upload_id": upload_id,

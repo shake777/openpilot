@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -37,6 +37,12 @@ class UploadConfig:
   site: str = ""
   software_version: str = ""
   note: str = "K7 radar observation capture"
+  # Optional C4-only web account (ID only, never a password); the server links this
+  # C4's serial to that account on upload.
+  account: str = ""
+  # The startup K7 radar inventory (read-only UDS at fingerprinting) runs only when a
+  # device opts in; C4s that just upload driving data never query the radar.
+  radar_inventory: bool = False
   spool_dir: str = "/data/c4-diagnostics/spool"
   state_path: str = "/data/c4-diagnostics/state.json"
 
@@ -65,9 +71,9 @@ def load_config(path: Path | None = None) -> UploadConfig:
   def setting(env_name: str, file_name: str, default=None):
     return os.environ.get(env_name, values.get(file_name, default))
 
-  api_key = setting("C4_DIAGNOSTICS_API_KEY", "api_key")
-  if not api_key:
-    raise UploadError("C4 diagnostics API key is not configured")
+  # Without a key the C4 uploads keyless; the server accepts that only from a serial the
+  # administrator linked to a C4 account and approved, so installing the branch is enough.
+  api_key = setting("C4_DIAGNOSTICS_API_KEY", "api_key") or ""
 
   config = UploadConfig(
     api_url=str(setting("C4_DIAGNOSTICS_API_URL", "api_url", DEFAULT_API_URL)),
@@ -80,6 +86,8 @@ def load_config(path: Path | None = None) -> UploadConfig:
     site=str(setting("C4_DIAGNOSTICS_SITE", "site", "")),
     software_version=str(setting("C4_DIAGNOSTICS_SOFTWARE_VERSION", "software_version", "")),
     note=str(setting("C4_DIAGNOSTICS_NOTE", "note", "K7 radar observation capture")),
+    account=str(setting("C4_DIAGNOSTICS_ACCOUNT", "account", "")).strip(),
+    radar_inventory=str(setting("C4_DIAGNOSTICS_RADAR_INVENTORY", "radar_inventory", False)).lower() in ("1", "true", "yes"),
     spool_dir=str(setting("C4_DIAGNOSTICS_SPOOL_DIR", "spool_dir", "/data/c4-diagnostics/spool")),
     state_path=str(setting("C4_DIAGNOSTICS_STATE_PATH", "state_path", "/data/c4-diagnostics/state.json")),
   )
@@ -144,13 +152,14 @@ def upload(config: UploadConfig, source_id: str, upload_id: str, paths: list[Pat
   metadata.update({key: value for key, value in optional_fields.items() if value})
   fields = {"metadata": json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))}
   body, boundary = build_multipart(fields, config.file_field, file_info)
-  auth_value = f"{config.auth_scheme} {config.api_key}".strip()
-  request = Request(config.api_url, data=body, method="POST", headers={
-    config.auth_header: auth_value,
+  headers = {
     "Content-Type": f"multipart/form-data; boundary={boundary}",
     "Accept": "application/json",
     "User-Agent": "openpilot-c4-diagnostics/1",
-  })
+  }
+  if config.api_key:
+    headers[config.auth_header] = f"{config.auth_scheme} {config.api_key}".strip()
+  request = Request(config.api_url, data=body, method="POST", headers=headers)
   try:
     with urlopen(request, timeout=config.timeout) as response:
       response_body = response.read().decode("utf-8")
@@ -172,6 +181,26 @@ def upload(config: UploadConfig, source_id: str, upload_id: str, paths: list[Pat
     "files": [{key: value for key, value in info.items() if key != "path"} for info in file_info],
     "receipt": receipt,
   }
+
+
+def registration_url(config: UploadConfig, source_id: str) -> str:
+  base = config.api_url.rsplit("/", 1)[0]
+  return f"{base}/registered?source_id={quote(source_id, safe='')}"
+
+
+def is_registered(config: UploadConfig, source_id: str) -> bool:
+  """Whether the server accepts keyless uploads from this C4; raises UploadError when unreachable."""
+  if not SOURCE_ID_RE.fullmatch(source_id):
+    return False
+  request = Request(registration_url(config, source_id), method="GET", headers={
+    "Accept": "application/json",
+    "User-Agent": "openpilot-c4-diagnostics/1",
+  })
+  try:
+    with urlopen(request, timeout=config.timeout) as response:
+      return json.loads(response.read().decode("utf-8")).get("registered") is True
+  except (HTTPError, URLError, OSError, ValueError, AttributeError) as exc:
+    raise UploadError(f"registration check failed: {exc}") from exc
 
 
 def parse_args(argv=None):

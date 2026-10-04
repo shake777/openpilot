@@ -173,7 +173,7 @@ class TestStartupInventory(unittest.TestCase):
     inventory.collect_inventory(lambda wait=False: [], lambda frames: None, lambda: None, broken_query, report)
     self.assertEqual(report["f100"], {"status": "error", "error_type": "RuntimeError"})
 
-  def startup(self, root, cs=None, frames=True, factory=None):
+  def startup(self, root, cs=None, frames=True, factory=None, opt_in=True):
     clock = [0.0]
     cs = cs or parked_state()
     factory = factory or QueryFactory()
@@ -188,7 +188,7 @@ class TestStartupInventory(unittest.TestCase):
       clock[0] += 0.1
       return [[Frame(0x386, b"\x00" * 8, 0)]] if frames else []
     params = SimpleNamespace(get_bool=lambda key: False, get_int=lambda key: 0)
-    config = UploadConfig("https://example.com", "not-a-real-key", spool_dir=str(root))
+    config = UploadConfig("https://example.com", "not-a-real-key", spool_dir=str(root), radar_inventory=opt_in)
     sent = []
     with patch.object(inventory, "load_config", return_value=config), \
          patch.object(inventory.time, "monotonic", side_effect=lambda: clock[0]), \
@@ -196,6 +196,13 @@ class TestStartupInventory(unittest.TestCase):
          patch.dict("sys.modules", {"opendbc.car.isotp_parallel_query": SimpleNamespace(IsoTpParallelQuery=factory)}):
       inventory.run_startup_inventory(ci, Sm(), params, receive, lambda frames: sent.extend(frames))
     return factory, sent
+
+  def test_startup_inventory_needs_device_opt_in(self):
+    # C4s that only upload driving data (other cars, other radar modes) never query the radar.
+    with tempfile.TemporaryDirectory() as directory:
+      factory, sent = self.startup(Path(directory), opt_in=False)
+      self.assertEqual(sent, [])
+      self.assertEqual(list(Path(directory).iterdir()), [])
 
   def test_startup_persists_and_only_attempts_once_per_boot(self):
     with tempfile.TemporaryDirectory() as tmp:

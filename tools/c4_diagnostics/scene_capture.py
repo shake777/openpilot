@@ -66,7 +66,7 @@ def _bool(obj, name):
 
 
 def build_scene_frame(mono_time: int, car_state, model, live_tracks, radar_state, car_control,
-                      longitudinal_plan=None, camera=None) -> dict:
+                      longitudinal_plan=None, camera=None, settings=None) -> dict:
   lane_lines = [_xy(line) for line in _take(model.laneLines, 4)]
   model_leads = [{
     "probability": _number(lead.prob),
@@ -78,6 +78,8 @@ def build_scene_frame(mono_time: int, car_state, model, live_tracks, radar_state
   return {
     "t": int(mono_time),
     "v_ego": _number(car_state.vEgo),
+    # Set speed (km/h); lets the server tell a long gap caused by the cruise speed cap apart.
+    "v_cruise": _number(getattr(car_state, "vCruise", None)),
     "steering_angle_deg": _number(car_state.steeringAngleDeg),
     "points": [_radar_point(point) for point in _take(live_tracks.points, 64)],
     "path": _xy(model.position),
@@ -104,6 +106,9 @@ def build_scene_frame(mono_time: int, car_state, model, live_tracks, radar_state
     # Road-camera projection for the qcamera overlay: calib = [roll, pitch, yaw,
     # height] (liveCalibration), cam = [width, height, focal] of the full-size
     # road camera. The server scales to the recorded video size.
+    "lat_active": _bool(car_control, "latActive"),
+    # Lateral settings for the centering review; sent on a subset of frames.
+    **({"settings": {key: _number(value) for key, value in settings.items()}} if settings else {}),
     "calib": [_number(value) for value in camera["calib"]] if camera and camera.get("calib") else None,
     "cam": [_number(value) for value in camera["cam"]] if camera and camera.get("cam") else None,
   }

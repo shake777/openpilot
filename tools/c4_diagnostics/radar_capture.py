@@ -21,14 +21,39 @@ RADAR_BUS = 1
 # Other K7 radar-bus messages still being decoded: 0x202/0x203 carry a millisecond
 # counter, 0x25A-0x25E look like up to ten raw detections, the rest are unknown.
 RADAR_AUX_ADDRESSES = frozenset((*range(0x201, 0x20E), *range(0x25A, 0x25F), *range(0x266, 0x270), 0x690, 0x691))
+# Any other bus-1 frame is kept too, so radars that send signals the K7 does not are still
+# captured, but at most 5 Hz per address so a busy bus 1 cannot fill the 2 MB capture.
+OTHER_RADAR_BUS_PERIOD_NS = 200_000_000
 
 
-def is_radar_address(address: int, source: int | None = None) -> bool:
+def is_known_radar_address(address: int, source: int | None = None) -> bool:
   # Radar-bus ranges are kept only from bus 1; on bus 0 the same IDs are unrelated
   # powertrain frames (e.g. 0x240, MDPS12 0x251) that used to fill a quarter of each capture.
   if CLASSIC_TRACK_START <= address <= CLASSIC_TRACK_END or address in RADAR_AUX_ADDRESSES:
     return source is None or source == RADAR_BUS
   return 0x500 <= address <= 0x53F or address in SCC_ADDRESSES or address in DIAGNOSTIC_ADDRESSES
+
+
+def is_radar_address(address: int, source: int | None = None) -> bool:
+  return source == RADAR_BUS or is_known_radar_address(address, source)
+
+
+class OtherRadarThrottle:
+  """Rate-limits bus-1 frames outside the known K7 radar addresses."""
+
+  def __init__(self):
+    self.last: dict[int, int] = {}
+
+  def allow(self, mono_time: int, address: int, source: int) -> bool:
+    if not is_radar_address(address, source):
+      return False
+    if is_known_radar_address(address, source):
+      return True
+    last = self.last.get(address)
+    if last is not None and 0 <= mono_time - last < OTHER_RADAR_BUS_PERIOD_NS:
+      return False
+    self.last[address] = mono_time
+    return True
 
 
 def capture_can_frame(writer, pending_diagnostics: deque, mono_time: int, address: int, source: int, data: bytes) -> None:
@@ -77,9 +102,10 @@ class RadarCaptureWriter:
     self.stream.write(MAGIC)
     self.size = len(MAGIC)
     self.records = 0
+    self.throttle = OtherRadarThrottle()
 
   def append(self, mono_time: int, address: int, source: int, data: bytes) -> bool:
-    if not is_radar_address(address, source):
+    if not self.throttle.allow(mono_time, address, source):
       return False
     record = encode_record(mono_time, address, source, data)
     self.stream.write(record)

@@ -248,6 +248,8 @@ def run_startup_inventory(ci, sm, params, can_recv, can_send):
     config = load_config()
   except UploadError:
     return
+  if not getattr(config, "radar_inventory", False):
+    return
   boot_id = str(uuid.UUID(Path("/proc/sys/kernel/random/boot_id").read_text().strip()))
   spool = Path(config.spool_dir)
   spool.mkdir(parents=True, exist_ok=True)

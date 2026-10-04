@@ -6,7 +6,7 @@ import time
 from collections import deque
 from pathlib import Path
 
-from openpilot.cereal import log
+from openpilot.cereal import car, log
 import openpilot.cereal.messaging as messaging
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
@@ -19,13 +19,14 @@ from tools.c4_diagnostics.qcamera_capture import (
   plan_bundle_start,
 )
 from tools.c4_diagnostics.event_capture import EVENT_POST_SECONDS, EventDetector, TimeRing, write_event_companion
-from tools.c4_diagnostics.radar_capture import MAX_PENDING_DIAGNOSTICS, RadarCaptureWriter, capture_can_frame, is_radar_address
+from tools.c4_diagnostics.radar_capture import MAX_PENDING_DIAGNOSTICS, OtherRadarThrottle, RadarCaptureWriter, capture_can_frame
 from tools.c4_diagnostics.scene_capture import SceneCaptureWriter, build_scene_frame
-from tools.c4_diagnostics.upload import UploadError, load_config
+from tools.c4_diagnostics.upload import UploadError, is_registered, load_config
 
 
 NetworkType = log.DeviceState.NetworkType
 CONFIG_RETRY_SECONDS = 60
+REGISTRATION_RETRY_SECONDS = 600
 UPLOAD_RETRY_SECONDS = 15
 SCENE_INTERVAL_SECONDS = 0.1
 # Video bundles keep the existing ~40-60 s window. The data-only bundle between
@@ -36,6 +37,37 @@ SCENE_SERVICES = ("carState", "modelV2", "liveTracks", "radarState", "carControl
 # Optional: scenes are still written before the first plan arrives.
 PLAN_SERVICE = "longitudinalPlan"
 CAMERA_SERVICES = ("liveCalibration", "roadCameraState")
+# Settings recorded for the server's lane-centering and radar recommendations.
+SCENE_SETTING_KEYS = ("UseLaneLineSpeed", "PathOffset", "CameraYawTrimDeg", "AdjustLaneOffset", "SteerActuatorDelay",
+                      "LatSmoothSec", "CustomSR", "LatMpcPathCost", "LatMpcInputOffset",
+                      # Longitudinal/radar settings for the radar review.
+                      "EnableRadarTracks", "LongitudinalPersonality", "TFollowGap1", "TFollowGap2", "TFollowGap3",
+                      "TFollowGap4", "StopDistanceCarrot", "LeadAccelResponse", "SpeedTFFactor", "TFollowDecelBoost")
+SCENE_SETTINGS_EVERY_FRAMES = 50
+LEARNED_SERVICES = ("liveParameters", "liveDelay")
+
+
+def scene_settings(params, sm=None):
+  values = {}
+  for key in SCENE_SETTING_KEYS:
+    try:
+      values[key] = params.get_float(key)
+    except Exception:
+      continue
+  try:
+    values["Wheelbase"] = float(messaging.log_from_bytes(params.get("CarParams"), car.CarParams).wheelbase)
+  except Exception:
+    pass
+  # Online-learned steering values, compared with CustomSR/SteerActuatorDelay on the server.
+  if sm is not None and sm.seen["liveParameters"]:
+    lp = sm["liveParameters"]
+    values.update({"LearnedSteerRatio": float(lp.steerRatio), "LearnedSteerRatioValid": float(lp.steerRatioValid),
+                   "LearnedStiffness": float(lp.stiffnessFactor), "LearnedAngleOffsetDeg": float(lp.angleOffsetAverageDeg)})
+  if sm is not None and sm.seen["liveDelay"]:
+    ld = sm["liveDelay"]
+    values.update({"LearnedLatDelay": float(ld.lateralDelayEstimate),
+                   "LearnedLatDelayValid": float(str(ld.status) == "estimated")})
+  return values
 DEFAULT_CAMERA_HEIGHT_M = 1.22
 
 
@@ -58,10 +90,14 @@ def scene_camera(sm):
 def read_source_id(config) -> str | None:
   if config.source_id:
     return config.source_id
-  value = Params().get("DongleId")
-  if isinstance(value, bytes):
-    value = value.decode("utf-8", errors="replace")
-  return value or None
+  # Keyless C4s are registered by the hardware serial shown in the device settings.
+  for key in (("DongleId",) if config.api_key else ("HardwareSerial", "DongleId")):
+    value = Params().get(key)
+    if isinstance(value, bytes):
+      value = value.decode("utf-8", errors="replace")
+    if value:
+      return value
+  return None
 
 
 def write_meminfo(capture: Path) -> None:
@@ -104,9 +140,14 @@ def wait_for_config(stop_event: threading.Event):
     try:
       config = load_config()
       source_id = read_source_id(config)
-      if source_id:
+      if not source_id:
+        cloudlog.warning("C4 diagnostics source_id is not configured")
+      elif config.api_key or is_registered(config, source_id):
         return config, source_id
-      cloudlog.warning("C4 diagnostics source_id is not configured")
+      else:
+        # Not approved yet: neither capture nor upload; ask again later.
+        stop_event.wait(REGISTRATION_RETRY_SECONDS)
+        continue
     except UploadError as exc:
       cloudlog.warning("C4 diagnostics is inactive: %s", exc)
     stop_event.wait(CONFIG_RETRY_SECONDS)
@@ -168,7 +209,7 @@ def main() -> None:
   qroad_sock = messaging.sub_sock("qRoadEncodeData", conflate=False)
   pending_diagnostics = deque(maxlen=MAX_PENDING_DIAGNOSTICS)
   sm = messaging.SubMaster(["deviceState", "carState", "modelV2", "liveTracks", "radarState", "carControl", PLAN_SERVICE,
-                            *CAMERA_SERVICES])
+                            *CAMERA_SERVICES, *LEARNED_SERVICES])
   writer = None
   scene_writer = None
   inventory_writer = None
@@ -179,8 +220,11 @@ def main() -> None:
   bundle_event = None
   # Last 15 s of radar CAN and scene frames, written first when an event starts a bundle.
   can_ring = TimeRing()
+  ring_throttle = OtherRadarThrottle()
   scene_ring = TimeRing()
   detector = EventDetector()
+  params = Params()
+  scene_count = 0
   next_scene_time = time.monotonic()
   try:
     while not stop_event.is_set():
@@ -219,7 +263,7 @@ def main() -> None:
       message = messaging.recv_one_or_none(can_sock)
       if message is not None:
         for frame in message.can:
-          if onroad and is_radar_address(frame.address, frame.src):
+          if onroad and ring_throttle.allow(message.logMonoTime, frame.address, frame.src):
             can_ring.push(message.logMonoTime, (message.logMonoTime, frame.address, frame.src, bytes(frame.dat)))
           if inventory_writer is not None:
             inventory_writer.append(message.logMonoTime, frame.address, frame.src, bytes(frame.dat))
@@ -239,7 +283,9 @@ def main() -> None:
         scene_frame = build_scene_frame(
           scene_mono, sm["carState"], sm["modelV2"], sm["liveTracks"], sm["radarState"], sm["carControl"],
           sm[PLAN_SERVICE] if sm.seen[PLAN_SERVICE] else None, scene_camera(sm),
+          scene_settings(params, sm) if scene_count % SCENE_SETTINGS_EVERY_FRAMES == 0 else None,
         )
+        scene_count += 1
         next_scene_time = monotonic_now + SCENE_INTERVAL_SECONDS
         if scene_writer is not None:
           scene_writer.append(scene_frame)

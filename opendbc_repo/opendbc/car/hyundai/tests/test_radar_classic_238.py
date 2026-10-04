@@ -221,11 +221,16 @@ class TestClassic238LongitudinalSelection:
 
   @pytest.mark.parametrize("kwargs", (
     {"status": 1, "distance": 20.1}, {"status": 1, "lateral": 1.3}, {"status": 3}, {"status": 4}, {"age_ns": 150_000_001},
-    {"status": 5}, {"distance": 2.9}, {"distance": 200.1}, {"lateral": 2.1}, {"lateral": -2.1},
+    {"status": 5}, {"distance": 2.9}, {"distance": 200.1}, {"lateral": 4.6}, {"lateral": -4.6},
     {"v_lead": -1.1},
   ))
   def test_unverified_stale_or_implausible_tracks_are_rejected(self, kwargs):
     assert classic_238_longitudinal_tracks([self.track(**kwargs)], 1_000_000_000) == []
+
+  @pytest.mark.parametrize("lateral", (2.1, -3.5, 4.5))
+  def test_confirmed_adjacent_lane_track_is_passed_for_cut_in_tracking(self, lateral):
+    track = self.track(lateral=lateral)
+    assert classic_238_longitudinal_tracks([track], 1_000_000_000) == [track]
 
   @pytest.mark.parametrize(("distance", "lateral"), [(3.0, 0.0), (8.5, 0.5), (20.0, -1.2)])
   def test_near_in_lane_status_one_is_a_tentative_candidate(self, distance, lateral):

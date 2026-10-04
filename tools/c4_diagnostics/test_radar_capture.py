@@ -68,6 +68,7 @@ class TestRadarCapture(unittest.TestCase):
       self.assertTrue(writer.append(124, 0x238, 1, b"classic!"))
       self.assertTrue(writer.append(125, 0x420, 0, b"scc-data"))
       self.assertFalse(writer.append(126, 0x123, 0, b"ignored"))
+      self.assertFalse(writer.append(127, 0x123, 2, b"ignored"))
       capture = writer.finalize()
       self.assertIsNotNone(capture)
       self.assertEqual(list(iter_records(capture)), [
@@ -88,6 +89,18 @@ class TestRadarCapture(unittest.TestCase):
       capture = writer.finalize()
       self.assertEqual([(address, source) for _, address, source, _ in iter_records(capture)],
                        [(0x202, 1), (0x25A, 1), (0x26E, 1), (0x690, 1), (0x240, 1), (0x420, 128)])
+
+  def test_other_radar_bus_frames_are_kept_at_five_hz(self):
+    with tempfile.TemporaryDirectory() as temp_dir:
+      writer = RadarCaptureWriter(Path(temp_dir), wall_time=1000)
+      # 0x3A0 is not a K7 radar address: another car's radar signal on bus 1.
+      kept = [writer.append(t * 50_000_000, 0x3A0, 1, b"otherrdr") for t in range(10)]
+      self.assertEqual(kept, [True, False, False, False, True, False, False, False, True, False])
+      # Known K7 radar frames are never throttled.
+      self.assertTrue(all(writer.append(t, 0x238, 1, b"classic!") for t in range(5)))
+      self.assertFalse(writer.append(0, 0x3A0, 0, b"bus0 ign"))
+      self.assertEqual(writer.records, 8)
+      writer.finalize()
 
   def test_empty_capture_is_removed(self):
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -141,7 +154,7 @@ class TestRadarCapture(unittest.TestCase):
                                  v=IntegerOnlyList([8.0]), a=IntegerOnlyList([-0.1]))
     frame = build_scene_frame(
       123,
-      SimpleNamespace(vEgo=10.0, steeringAngleDeg=2.0, aEgo=-0.3, gasPressed=False, brakePressed=True,
+      SimpleNamespace(vEgo=10.0, vCruise=60.0, steeringAngleDeg=2.0, aEgo=-0.3, gasPressed=False, brakePressed=True,
                       standstill=False, steeringPressed=False, leftBlindspot=True, rightBlindspot=False),
       SimpleNamespace(position=xy, laneLines=IntegerOnlyList([xy] * 4),
                       laneLineProbs=IntegerOnlyList([0.9] * 4), leadsV3=IntegerOnlyList([model_lead])),
@@ -150,6 +163,7 @@ class TestRadarCapture(unittest.TestCase):
       SimpleNamespace(longActive=True, enabled=True, actuators=SimpleNamespace(accel=-0.5)),
       SimpleNamespace(tFollow=1.1, desiredDistance=16.5),
       {"calib": [0.0, 0.02, -0.01, 1.3], "cam": [1344, 760, 1141.5]},
+      {"PathOffset": 0.0, "CameraYawTrimDeg": -10.0},
     )
     with tempfile.TemporaryDirectory() as temp_dir:
       writer = SceneCaptureWriter(Path(temp_dir), "capture", 1000)
@@ -164,6 +178,8 @@ class TestRadarCapture(unittest.TestCase):
     self.assertEqual((saved["a_ego"], saved["brake_pressed"], saved["left_blindspot"]), (-0.3, True, True))
     self.assertEqual((saved["t_follow"], saved["desired_distance"]), (1.1, 16.5))
     self.assertEqual((saved["calib"], saved["cam"]), ([0.0, 0.02, -0.01, 1.3], [1344, 760, 1141.5]))
+    self.assertEqual(saved["settings"], {"PathOffset": 0.0, "CameraYawTrimDeg": -10.0})
+    self.assertEqual(saved["v_cruise"], 60.0)
 
   def test_scene_capture_tolerates_missing_optional_fields(self):
     xy = SimpleNamespace(x=IntegerOnlyList([0.0]), y=IntegerOnlyList([0.0]))
@@ -180,6 +196,7 @@ class TestRadarCapture(unittest.TestCase):
     self.assertIsNone(frame["t_follow"])
     self.assertIsNone(frame["left_blindspot"])
     self.assertIsNone(frame["calib"])
+    self.assertNotIn("settings", frame)
 
   def test_prune_spool_removes_oldest_uploaded_bundles_first(self):
     from tools.c4_diagnostics.auto_upload import prune_spool
