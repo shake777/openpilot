@@ -162,6 +162,8 @@ struct OnroadEvent @0xc4fa6047f024e718 {
     updateRebootRequired @125;
     driverMonitorFallback @126;
     systemReady @127;
+    impactDetected @128;
+    impactDashcamReboot @129;
 
     soundsUnavailableDEPRECATED @47;
   }
@@ -1503,6 +1505,7 @@ struct ProcLog {
     memPss @17 :UInt64;        # Pss — shared pages split by mapper count
     memPssAnon @18 :UInt64;    # Pss_Anon — private anonymous (heap, stack)
     memPssShmem @19 :UInt64;   # Pss_Shmem — proportional MSGQ/tmpfs share
+    memPssMonoTime @20 :UInt64; # scan start in monotonic ns; 0 means unavailable (also older logs)
   }
 
   struct CPUTimes {

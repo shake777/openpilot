@@ -102,6 +102,9 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"Offroad_UpdateFailed", {CLEAR_ON_MANAGER_START, JSON}},
     {"Offroad_DriverMonitoringUncertain", {CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION, JSON}},
     {"OnroadCycleRequested", {CLEAR_ON_MANAGER_START, BOOL}},
+    {"ImpactDashcamNotice", {CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION, JSON}},
+    {"ImpactDashcamFeedback", {CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION, JSON}},
+    {"ImpactDashcamReboot", {CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION, BOOL}},
     {"OpenpilotEnabledToggle", {PERSISTENT, BOOL, "1"}},
     {"PandaHeartbeatLost", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, BOOL}},
     {"PandaSomResetTriggered", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, BOOL}},
@@ -309,6 +312,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"SoftwareMenu", {PERSISTENT, INT, "1"}},
 
     {"HyundaiCameraSCC", {PERSISTENT, INT, "0"}},
+    {"HyundaiCanfdClusterDirectTx", {PERSISTENT, BOOL, "0"}},
     {"FingerPrints", {PERSISTENT | CLEAR_ON_MANAGER_START, STRING}},
     {"IsLdwsCar", {PERSISTENT, INT, "0"}},
     {"CanfdHDA2", {PERSISTENT, INT, "0"}},
