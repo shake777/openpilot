@@ -19,3 +19,6 @@
 - 618b8e1b06f1f9139f9ca8525dc2875befb57a9a를 origin/carrot-wip-custom에 정상 푸시했다. Carrot Routes image 실행 37242757048이 native 커널 빌드·레이더 테스트·이미지 빌드·게시 모두 성공했다.
 - 저장된 다유 NAS 관리자 SSH 접속은 성공했지만 /volume1/docker 및 /volume1/openpilot 디렉터리가 없고 127.0.0.1:18080 서비스도 없었다. 문서의 Carrot Routes 배포 대상을 이 NAS로 가정하지 않는다. 사용자에게 실제 NAS 또는 홈페이지 주소를 요청했다.
 - NAS 배포 커밋·updater 결과·실제 레이더 결과 재계산은 아직 미확인이다. NAS와 C4 설정·설치·제어는 변경하지 않았다. 접속 정보는 기존 비공개 파일에서만 읽었고 추적 문서에 넣지 않았다.
+- 사용자가 분석 실행 대상은 Docker 등이 설치된 웹서버라고 정정했다. 웹서버의 현재 실행 서비스와 업데이트 경로를 읽기 전용으로 확인한다. NAS 저장소에 Docker가 없다는 사실만으로 웹서버 배포까지 불가능하다고 판단하지 않는다.
+- 웹서버 dayou-web에 Docker가 설치되어 있고 기존 C4 분석은 dayou-diagnostics.service로 /opt/dayou-diagnostics에서 실행된다. NAS 공유폴더는 /mnt/dayou-diagnostics에 마운트되어 있다. 서비스 active와 C4 로그인 HTTP 200을 확인했다.
+- 현재·정지 Docker 컨테이너와 /opt·/srv·/home/ubuntu의 제한된 배포 설정 검색에서 Carrot Routes image updater를 찾지 못했다. 기존 C4 분석은 자체 c4_diagnostics.py를 사용하고 원 제작자의 route-vault 배포와 동일하지 않다. 단순 이미지 교체는 아닌 재분석 엔진 신규 설치·연결이 필요하므로 이 범위는 사용자 선택을 확인한다. 웹서버 실행 설정은 변경하지 않았다.
