@@ -199,6 +199,19 @@ class TestRadarCapture(unittest.TestCase):
     self.assertEqual(saved["settings"], {"PathOffset": 0.0, "CameraYawTrimDeg": -10.0})
     self.assertEqual(saved["v_cruise"], 60.0)
 
+  def test_scene_nav_records_external_and_stock_navigation(self):
+    from tools.c4_diagnostics.scene_capture import scene_nav
+    car_state = SimpleNamespace(speedLimit=60, speedLimitDistance=0.0, leftBlinker=False, rightBlinker=True)
+    carrot_man = SimpleNamespace(activeCarrot=2, nRoadLimitSpeed=60, xSpdType=1, xSpdLimit=50, xSpdDist=320,
+                                 xTurnInfo=2, xDistToTurn=150, szTBTMainText="우회전 " * 20, szSdiDescr="",
+                                 desiredSpeed=50, desiredSource="cam", vehicleNaviActive=False, vehicleNaviSpeed=0)
+    nav = scene_nav(carrot_man, car_state)
+    self.assertEqual((nav["stock_limit"], nav["right_blinker"], nav["turn"], nav["turn_dist"], nav["spd_dist"]),
+                     (60, True, 2, 150, 320))
+    self.assertEqual(len(nav["tbt"]), 40)
+    self.assertIsNone(nav["sdi"])
+    self.assertEqual(set(scene_nav(None, car_state)), {"stock_limit", "stock_limit_dist", "left_blinker", "right_blinker"})
+
   def test_scene_capture_tolerates_missing_optional_fields(self):
     xy = SimpleNamespace(x=IntegerOnlyList([0.0]), y=IntegerOnlyList([0.0]))
     lead = SimpleNamespace(status=False, radar=False, radarTrackId=-1, dRel=0.0, yRel=0.0, vRel=0.0,

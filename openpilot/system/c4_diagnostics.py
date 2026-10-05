@@ -20,7 +20,7 @@ from tools.c4_diagnostics.qcamera_capture import (
 )
 from tools.c4_diagnostics.event_capture import EVENT_POST_SECONDS, EventDetector, TimeRing, write_event_companion
 from tools.c4_diagnostics.radar_capture import MAX_PENDING_DIAGNOSTICS, OtherRadarThrottle, RadarCaptureWriter, capture_can_frame
-from tools.c4_diagnostics.scene_capture import SceneCaptureWriter, build_scene_frame
+from tools.c4_diagnostics.scene_capture import SceneCaptureWriter, build_scene_frame, scene_nav
 from tools.c4_diagnostics.upload import UploadError, is_registered, load_config
 
 
@@ -209,7 +209,7 @@ def main() -> None:
   qroad_sock = messaging.sub_sock("qRoadEncodeData", conflate=False)
   pending_diagnostics = deque(maxlen=MAX_PENDING_DIAGNOSTICS)
   sm = messaging.SubMaster(["deviceState", "carState", "modelV2", "liveTracks", "radarState", "carControl", PLAN_SERVICE,
-                            *CAMERA_SERVICES, *LEARNED_SERVICES])
+                            *CAMERA_SERVICES, *LEARNED_SERVICES, "carrotMan"])
   writer = None
   scene_writer = None
   inventory_writer = None
@@ -284,6 +284,7 @@ def main() -> None:
           scene_mono, sm["carState"], sm["modelV2"], sm["liveTracks"], sm["radarState"], sm["carControl"],
           sm[PLAN_SERVICE] if sm.seen[PLAN_SERVICE] else None, scene_camera(sm),
           scene_settings(params, sm) if scene_count % SCENE_SETTINGS_EVERY_FRAMES == 0 else None,
+          scene_nav(sm["carrotMan"] if sm.seen["carrotMan"] else None, sm["carState"]),
         )
         scene_count += 1
         next_scene_time = monotonic_now + SCENE_INTERVAL_SECONDS

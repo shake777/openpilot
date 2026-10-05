@@ -65,8 +65,45 @@ def _bool(obj, name):
   return bool(value) if value is not None else None
 
 
+def _text(value, limit: int = 40):
+  return value[:limit] if isinstance(value, str) and value else None
+
+
+def _int(owner, name):
+  value = getattr(owner, name, None)
+  return int(value) if isinstance(value, (int, float)) and math.isfinite(value) else None
+
+
+def scene_nav(carrot_man, car_state) -> dict:
+  """External navigation (vNavi via carrotMan) next to what the car's own CAN reports, so stock
+  navigation/HUD CAN signals can be matched against known turn/camera distances."""
+  nav = {
+    "stock_limit": _int(car_state, "speedLimit"),
+    "stock_limit_dist": _number(getattr(car_state, "speedLimitDistance", None)),
+    "left_blinker": _bool(car_state, "leftBlinker"),
+    "right_blinker": _bool(car_state, "rightBlinker"),
+  }
+  if carrot_man is not None:
+    nav.update({
+      "active": _int(carrot_man, "activeCarrot"),
+      "road_limit": _int(carrot_man, "nRoadLimitSpeed"),
+      "spd_type": _int(carrot_man, "xSpdType"),
+      "spd_limit": _int(carrot_man, "xSpdLimit"),
+      "spd_dist": _int(carrot_man, "xSpdDist"),
+      "turn": _int(carrot_man, "xTurnInfo"),
+      "turn_dist": _int(carrot_man, "xDistToTurn"),
+      "tbt": _text(getattr(carrot_man, "szTBTMainText", None)),
+      "sdi": _text(getattr(carrot_man, "szSdiDescr", None)),
+      "desired_speed": _int(carrot_man, "desiredSpeed"),
+      "desired_source": _text(getattr(carrot_man, "desiredSource", None), 16),
+      "vehicle_navi_active": _bool(carrot_man, "vehicleNaviActive"),
+      "vehicle_navi_speed": _int(carrot_man, "vehicleNaviSpeed"),
+    })
+  return nav
+
+
 def build_scene_frame(mono_time: int, car_state, model, live_tracks, radar_state, car_control,
-                      longitudinal_plan=None, camera=None, settings=None) -> dict:
+                      longitudinal_plan=None, camera=None, settings=None, nav=None) -> dict:
   lane_lines = [_xy(line) for line in _take(model.laneLines, 4)]
   model_leads = [{
     "probability": _number(lead.prob),
@@ -111,6 +148,7 @@ def build_scene_frame(mono_time: int, car_state, model, live_tracks, radar_state
     **({"settings": {key: _number(value) for key, value in settings.items()}} if settings else {}),
     "calib": [_number(value) for value in camera["calib"]] if camera and camera.get("calib") else None,
     "cam": [_number(value) for value in camera["cam"]] if camera and camera.get("cam") else None,
+    **({"nav": nav} if nav else {}),
   }
 
 
