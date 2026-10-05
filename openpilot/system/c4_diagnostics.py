@@ -263,7 +263,7 @@ def main() -> None:
       message = messaging.recv_one_or_none(can_sock)
       if message is not None:
         for frame in message.can:
-          if onroad and ring_throttle.allow(message.logMonoTime, frame.address, frame.src):
+          if onroad and ring_throttle.allow(message.logMonoTime, frame.address, frame.src, bytes(frame.dat)):
             can_ring.push(message.logMonoTime, (message.logMonoTime, frame.address, frame.src, bytes(frame.dat)))
           if inventory_writer is not None:
             inventory_writer.append(message.logMonoTime, frame.address, frame.src, bytes(frame.dat))

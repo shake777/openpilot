@@ -24,6 +24,15 @@ RADAR_AUX_ADDRESSES = frozenset((*range(0x201, 0x20E), *range(0x25A, 0x25F), *ra
 # Any other bus-1 frame is kept too, so radars that send signals the K7 does not are still
 # captured, but at most 5 Hz per address so a busy bus 1 cannot fill the 2 MB capture.
 OTHER_RADAR_BUS_PERIOD_NS = 200_000_000
+# Vehicle (0) and camera (2) bus frames are kept too, to find body/infotainment signals such as
+# stock navigation turn-by-turn for the HUD: a frame whose payload changed is kept at most
+# 5 Hz per address from 0x400 up (body/infotainment) and 1 Hz below (fast powertrain/chassis),
+# and an unchanged payload every 2 s.
+BODY_BUSES = (0, 2)
+BODY_ADDRESS_SPLIT = 0x400
+BODY_CHANGED_PERIOD_NS = 200_000_000
+BODY_FAST_CHANGED_PERIOD_NS = 1_000_000_000
+BODY_UNCHANGED_PERIOD_NS = 2_000_000_000
 
 
 def is_known_radar_address(address: int, source: int | None = None) -> bool:
@@ -35,24 +44,34 @@ def is_known_radar_address(address: int, source: int | None = None) -> bool:
 
 
 def is_radar_address(address: int, source: int | None = None) -> bool:
-  return source == RADAR_BUS or is_known_radar_address(address, source)
+  return source == RADAR_BUS or source in BODY_BUSES or is_known_radar_address(address, source)
 
 
 class OtherRadarThrottle:
-  """Rate-limits bus-1 frames outside the known K7 radar addresses."""
+  """Rate-limits frames outside the known K7 radar addresses (other bus-1 radar signals and
+  vehicle/camera-bus body frames); known radar frames always pass."""
 
   def __init__(self):
-    self.last: dict[int, int] = {}
+    self.last: dict[tuple[int, int], tuple[int, bytes]] = {}
 
-  def allow(self, mono_time: int, address: int, source: int) -> bool:
+  def allow(self, mono_time: int, address: int, source: int, data: bytes = b"") -> bool:
     if not is_radar_address(address, source):
       return False
     if is_known_radar_address(address, source):
       return True
-    last = self.last.get(address)
-    if last is not None and 0 <= mono_time - last < OTHER_RADAR_BUS_PERIOD_NS:
-      return False
-    self.last[address] = mono_time
+    key = (source, address)
+    last = self.last.get(key)
+    if last is not None:
+      elapsed = mono_time - last[0]
+      if source == RADAR_BUS:
+        period = OTHER_RADAR_BUS_PERIOD_NS
+      elif data != last[1]:
+        period = BODY_CHANGED_PERIOD_NS if address >= BODY_ADDRESS_SPLIT else BODY_FAST_CHANGED_PERIOD_NS
+      else:
+        period = BODY_UNCHANGED_PERIOD_NS
+      if 0 <= elapsed < period:
+        return False
+    self.last[key] = (mono_time, bytes(data))
     return True
 
 
@@ -105,7 +124,7 @@ class RadarCaptureWriter:
     self.throttle = OtherRadarThrottle()
 
   def append(self, mono_time: int, address: int, source: int, data: bytes) -> bool:
-    if not self.throttle.allow(mono_time, address, source):
+    if not self.throttle.allow(mono_time, address, source, data):
       return False
     record = encode_record(mono_time, address, source, data)
     self.stream.write(record)

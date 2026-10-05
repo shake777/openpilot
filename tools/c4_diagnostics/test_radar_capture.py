@@ -67,14 +67,15 @@ class TestRadarCapture(unittest.TestCase):
       self.assertTrue(writer.append(123, 0x500, 1, b"\x01\x02\x03\x04\x05\x06\x07\x08"))
       self.assertTrue(writer.append(124, 0x238, 1, b"classic!"))
       self.assertTrue(writer.append(125, 0x420, 0, b"scc-data"))
-      self.assertFalse(writer.append(126, 0x123, 0, b"ignored"))
-      self.assertFalse(writer.append(127, 0x123, 2, b"ignored"))
+      self.assertTrue(writer.append(126, 0x123, 0, b"body-bus"))
+      self.assertFalse(writer.append(127, 0x123, 128, b"echo-tx!"))
       capture = writer.finalize()
       self.assertIsNotNone(capture)
       self.assertEqual(list(iter_records(capture)), [
         (123, 0x500, 1, b"\x01\x02\x03\x04\x05\x06\x07\x08"),
         (124, 0x238, 1, b"classic!"),
         (125, 0x420, 0, b"scc-data"),
+        (126, 0x123, 0, b"body-bus"),
       ])
 
   def test_radar_bus_ranges_are_kept_only_from_bus_1(self):
@@ -82,13 +83,30 @@ class TestRadarCapture(unittest.TestCase):
       writer = RadarCaptureWriter(Path(temp_dir), wall_time=1000)
       for address in (0x202, 0x25A, 0x26E, 0x690, 0x240):
         self.assertTrue(writer.append(1, address, 1, b"radarbus"))
-      # Same IDs on bus 0 (e.g. 0x240, MDPS12 0x251) and their echoes are unrelated frames.
-      for address, source in ((0x240, 0), (0x251, 0), (0x251, 194), (0x25A, 0), (0x238, 130)):
+      # Echoes of transmitted frames are never captured.
+      for address, source in ((0x251, 194), (0x238, 130)):
         self.assertFalse(writer.append(2, address, source, b"notradar"))
       self.assertTrue(writer.append(3, 0x420, 128, b"scc-echo"))
       capture = writer.finalize()
       self.assertEqual([(address, source) for _, address, source, _ in iter_records(capture)],
                        [(0x202, 1), (0x25A, 1), (0x26E, 1), (0x690, 1), (0x240, 1), (0x420, 128)])
+
+  def test_body_bus_frames_keep_changes_at_bounded_rates(self):
+    with tempfile.TemporaryDirectory() as temp_dir:
+      writer = RadarCaptureWriter(Path(temp_dir), wall_time=1000)
+      ms = 1_000_000
+      # 0x544 (infotainment range): a changed payload is kept at most every 200 ms.
+      kept = [writer.append(t * 100 * ms, 0x544, 0, bytes([t, 0, 0, 0, 0, 0, 0, 0])) for t in range(6)]
+      self.assertEqual(kept, [True, False, True, False, True, False])
+      # An unchanged payload is kept every 2 s only.
+      same = [writer.append(1000 * ms + t * 500 * ms, 0x562, 0, b"hudstate") for t in range(6)]
+      self.assertEqual(same, [True, False, False, False, True, False])
+      # Fast powertrain range (below 0x400): changes kept once per second.
+      fast = [writer.append(t * 250 * ms, 0x251, 0, bytes([t]) + bytes(7)) for t in range(9)]
+      self.assertEqual(fast, [True, False, False, False, True, False, False, False, True])
+      # Bus 0 and bus 2 copies of one address are throttled separately.
+      self.assertTrue(writer.append(0, 0x544, 2, b"camerabs"))
+      writer.finalize()
 
   def test_other_radar_bus_frames_are_kept_at_five_hz(self):
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -98,7 +116,7 @@ class TestRadarCapture(unittest.TestCase):
       self.assertEqual(kept, [True, False, False, False, True, False, False, False, True, False])
       # Known K7 radar frames are never throttled.
       self.assertTrue(all(writer.append(t, 0x238, 1, b"classic!") for t in range(5)))
-      self.assertFalse(writer.append(0, 0x3A0, 0, b"bus0 ign"))
+      self.assertFalse(writer.append(0, 0x3A0, 128, b"echo ign"))
       self.assertEqual(writer.records, 8)
       writer.finalize()
 
