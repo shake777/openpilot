@@ -211,6 +211,20 @@ class TestRadarCapture(unittest.TestCase):
     self.assertEqual(len(nav["tbt"]), 40)
     self.assertIsNone(nav["sdi"])
     self.assertEqual(set(scene_nav(None, car_state)), {"stock_limit", "stock_limit_dist", "left_blinker", "right_blinker"})
+    present = SimpleNamespace(present=True)
+    navi = SimpleNamespace(
+      connected=True,
+      guidanceCurrent=SimpleNamespace(meta=present, turnType=13, distanceM=240, mainText="우회전"),
+      speed=SimpleNamespace(meta=present, roadLimitValid=True, roadLimitKph=100, sdiPresent=True, sdiType=1,
+                            sdiDistanceM=850, sdiSpeedLimitKph=100, sectionActive=False, sectionPresent=False,
+                            sectionSpeedLimitKph=0),
+      laneCurrent=SimpleNamespace(meta=present, roadCategory=1))
+    v2 = scene_nav(carrot_man, car_state, navi)
+    self.assertEqual((v2["source"], v2["turn"], v2["turn_dist"], v2["tbt"], v2["road_limit"], v2["spd_dist"],
+                      v2["spd_limit"], v2["section_limit"], v2["road_category"]),
+                     ("v2", 13, 240, "우회전", 100, 850, 100, None, 1))
+    disconnected = scene_nav(carrot_man, car_state, SimpleNamespace(connected=False))
+    self.assertEqual((disconnected.get("source"), disconnected["turn_dist"]), (None, 150))
 
   def test_scene_capture_tolerates_missing_optional_fields(self):
     xy = SimpleNamespace(x=IntegerOnlyList([0.0]), y=IntegerOnlyList([0.0]))

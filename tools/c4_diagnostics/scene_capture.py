@@ -74,7 +74,12 @@ def _int(owner, name):
   return int(value) if isinstance(value, (int, float)) and math.isfinite(value) else None
 
 
-def scene_nav(carrot_man, car_state) -> dict:
+def _present(owner):
+  meta = getattr(owner, "meta", None)
+  return owner is not None and bool(getattr(meta, "present", False))
+
+
+def scene_nav(carrot_man, car_state, carrot_navi=None) -> dict:
   """External navigation (vNavi via carrotMan) next to what the car's own CAN reports, so stock
   navigation/HUD CAN signals can be matched against known turn/camera distances."""
   nav = {
@@ -99,6 +104,29 @@ def scene_nav(carrot_man, car_state) -> dict:
       "vehicle_navi_active": _bool(carrot_man, "vehicleNaviActive"),
       "vehicle_navi_speed": _int(carrot_man, "vehicleNaviSpeed"),
     })
+  # Carrot Navi v2 (TCP 7714) publishes carrotNavi; while connected it replaces the legacy fields.
+  if carrot_navi is not None and bool(getattr(carrot_navi, "connected", False)):
+    guidance = getattr(carrot_navi, "guidanceCurrent", None)
+    speed = getattr(carrot_navi, "speed", None)
+    lane = getattr(carrot_navi, "laneCurrent", None)
+    nav["source"] = "v2"
+    if _present(guidance):
+      nav.update({"turn": _int(guidance, "turnType"), "turn_dist": _int(guidance, "distanceM"),
+                  "tbt": _text(getattr(guidance, "mainText", None))})
+    else:
+      nav.update({"turn": None, "turn_dist": None, "tbt": None})
+    if _present(speed):
+      nav.update({
+        "road_limit": _int(speed, "roadLimitKph") if getattr(speed, "roadLimitValid", False) else None,
+        "spd_type": _int(speed, "sdiType") if getattr(speed, "sdiPresent", False) else None,
+        "spd_dist": _int(speed, "sdiDistanceM") if getattr(speed, "sdiPresent", False) else None,
+        "spd_limit": _int(speed, "sdiSpeedLimitKph") if getattr(speed, "sdiPresent", False) else None,
+        "section_active": _bool(speed, "sectionActive"),
+        "section_limit": _int(speed, "sectionSpeedLimitKph") if getattr(speed, "sectionPresent", False) else None,
+      })
+    else:
+      nav.update({"road_limit": None, "spd_type": None, "spd_dist": None, "spd_limit": None})
+    nav["road_category"] = _int(lane, "roadCategory") if _present(lane) else None
   return nav
 
 
