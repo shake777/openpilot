@@ -317,6 +317,27 @@ def test_old_params_backup_file_is_filtered_before_download(tmp_path):
   assert params_service.read_param_backup_values(str(backup_path)) == {"DriverMonitoringMode": "1"}
 
 
+def test_device_counters_are_never_backed_up_or_restored(tmp_path, monkeypatch):
+  # A backup carrying RouteCount=54 restarted route names below the existing
+  # ones, and the deleter then removed every new recording.
+  backup_path = tmp_path / "params_backup.json"
+  backup_path.write_text(json.dumps({"RouteCount": "54", "BootCount": "9", "LastUpdateRouteCount": "50",
+                                     "DriverMonitoringMode": "1"}), encoding="utf-8")
+  assert params_service.read_param_backup_values(str(backup_path)) == {"DriverMonitoringMode": "1"}
+
+  monkeypatch.setattr(params_service, "HAS_PARAMS", True)
+  monkeypatch.setattr(params_service, "ParamKeyType", object())
+  monkeypatch.setattr(params_service, "Params", object)
+  monkeypatch.setattr(params_service, "get_param_values", lambda names, defaults: {})
+  for source in ("restore", "reset_defaults"):
+    preview = params_service.preview_param_restore_values({"RouteCount": "54"}, source=source)
+    assert not preview["entries"][0]["apply"]
+    restored = params_service.restore_param_values_validated({"RouteCount": "54"}, source=source)
+    assert restored["result"] == {"ok_cnt": 0, "fail_cnt": 0, "fails": []}
+  with pytest.raises(ValueError):
+    params_service.set_param_value("RouteCount", 54)
+
+
 def test_map_param_reader_reads_map_fps_file_while_native_registry_is_stale(tmp_path):
   stale_params = StaleParams(tmp_path)
   (tmp_path / "ClusterNaviMapFps").write_text("3", encoding="utf-8")
