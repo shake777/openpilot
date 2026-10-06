@@ -33,6 +33,25 @@ BODY_ADDRESS_SPLIT = 0x400
 BODY_CHANGED_PERIOD_NS = 200_000_000
 BODY_FAST_CHANGED_PERIOD_NS = 1_000_000_000
 BODY_UNCHANGED_PERIOD_NS = 2_000_000_000
+# Camera-bus signals under study (K7 HDA1): every content change is kept, ignoring rolling
+# counters/checksums, plus one frame per second. 0x340 LKAS11 (LDW/FCW warnings), 0x484 HDA11_MFC,
+# 0x485 LFAHDA_MFC, 0x4A7 MFC, 0x53E LKAS12 (traffic-sign speed). Value = (byte, mask) pairs ignored.
+FOCUS_ADDRESSES = {
+  0x340: ((4, 0xF0), (6, 0xFF)),
+  0x484: ((0, 0x3C),),
+  0x485: (),
+  0x4A7: (),
+  0x53E: (),
+}
+FOCUS_KEEPALIVE_NS = 1_000_000_000
+
+
+def focus_content(address: int, data: bytes) -> bytes:
+  content = bytearray(data)
+  for index, mask in FOCUS_ADDRESSES.get(address, ()):
+    if index < len(content):
+      content[index] &= ~mask & 0xFF
+  return bytes(content)
 
 
 def is_known_radar_address(address: int, source: int | None = None) -> bool:
@@ -61,6 +80,12 @@ class OtherRadarThrottle:
       return True
     key = (source, address)
     last = self.last.get(key)
+    if source == 2 and address in FOCUS_ADDRESSES:
+      content = focus_content(address, data)
+      if last is not None and content == last[1] and 0 <= mono_time - last[0] < FOCUS_KEEPALIVE_NS:
+        return False
+      self.last[key] = (mono_time, content)
+      return True
     if last is not None:
       elapsed = mono_time - last[0]
       if source == RADAR_BUS:

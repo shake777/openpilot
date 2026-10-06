@@ -120,6 +120,24 @@ class TestRadarCapture(unittest.TestCase):
       self.assertEqual(writer.records, 8)
       writer.finalize()
 
+  def test_camera_focus_signals_keep_every_content_change(self):
+    with tempfile.TemporaryDirectory() as temp_dir:
+      writer = RadarCaptureWriter(Path(temp_dir), wall_time=1000)
+      ms = 1_000_000
+      # 0x340 at 100 Hz: only the counter/checksum change -> one frame per second.
+      counter_only = [writer.append(t * 10 * ms, 0x340, 2, bytes([0, 0, 0, 0, (t % 16) << 4, 0, t % 256, 0]))
+                      for t in range(150)]
+      self.assertEqual(sum(counter_only), 2)
+      # A warning bit change is kept immediately, even 10 ms later.
+      self.assertTrue(writer.append(1500 * ms, 0x340, 2, bytes([0, 0x04, 0, 0, 0, 0, 0, 0])))
+      self.assertTrue(writer.append(1510 * ms, 0x340, 2, bytes([0, 0x00, 0, 0, 0x10, 0, 1, 0])))
+      # 0x484 changes are all kept; an unchanged payload waits for the 1 s keepalive.
+      kept = [writer.append(t * 100 * ms, 0x484, 2, bytes([0, 0, speed, 0, 0, 0, 0, 0])) for t, speed in enumerate((0, 60, 60, 80))]
+      self.assertEqual(kept, [True, True, False, True])
+      # 0x53E (LKAS12 traffic-sign speed) is in the 0x500-0x53F range that is always kept in full.
+      self.assertTrue(all(writer.append(t, 0x53E, 2, bytes(6)) for t in range(3)))
+      writer.finalize()
+
   def test_empty_capture_is_removed(self):
     with tempfile.TemporaryDirectory() as temp_dir:
       writer = RadarCaptureWriter(Path(temp_dir), wall_time=1000)
