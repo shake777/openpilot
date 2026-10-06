@@ -225,6 +225,10 @@ class TestRadarCapture(unittest.TestCase):
                      ("v2", 13, 240, "우회전", 100, 850, 100, None, 1))
     disconnected = scene_nav(carrot_man, car_state, SimpleNamespace(connected=False))
     self.assertEqual((disconnected.get("source"), disconnected["turn_dist"]), (None, 150))
+    inst = SimpleNamespace(maneuverDistance=180.0, maneuverType="turn", maneuverModifier="right", speedLimit=60 / 3.6)
+    with_inst = scene_nav(None, car_state, None, inst)
+    self.assertEqual((with_inst["inst_dist"], with_inst["inst_type"], with_inst["inst_modifier"], with_inst["inst_limit"]),
+                     (180.0, "turn", "right", 60))
 
   def test_scene_capture_tolerates_missing_optional_fields(self):
     xy = SimpleNamespace(x=IntegerOnlyList([0.0]), y=IntegerOnlyList([0.0]))

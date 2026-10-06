@@ -79,7 +79,7 @@ def _present(owner):
   return owner is not None and bool(getattr(meta, "present", False))
 
 
-def scene_nav(carrot_man, car_state, carrot_navi=None) -> dict:
+def scene_nav(carrot_man, car_state, carrot_navi=None, nav_instruction=None) -> dict:
   """External navigation (vNavi via carrotMan) next to what the car's own CAN reports, so stock
   navigation/HUD CAN signals can be matched against known turn/camera distances."""
   nav = {
@@ -127,6 +127,13 @@ def scene_nav(carrot_man, car_state, carrot_navi=None) -> dict:
     else:
       nav.update({"road_limit": None, "spd_type": None, "spd_dist": None, "spd_limit": None})
     nav["road_category"] = _int(lane, "roadCategory") if _present(lane) else None
+  # navInstructionCarrot: the generic instruction other navigation sources also fill.
+  if nav_instruction is not None:
+    limit = _number(getattr(nav_instruction, "speedLimit", None))
+    nav.update({"inst_dist": _number(getattr(nav_instruction, "maneuverDistance", None)),
+                "inst_type": _text(getattr(nav_instruction, "maneuverType", None), 16),
+                "inst_modifier": _text(getattr(nav_instruction, "maneuverModifier", None), 16),
+                "inst_limit": round(limit * 3.6) if limit else None})
   return nav
 
 

@@ -209,7 +209,8 @@ def main() -> None:
   qroad_sock = messaging.sub_sock("qRoadEncodeData", conflate=False)
   pending_diagnostics = deque(maxlen=MAX_PENDING_DIAGNOSTICS)
   sm = messaging.SubMaster(["deviceState", "carState", "modelV2", "liveTracks", "radarState", "carControl", PLAN_SERVICE,
-                            *CAMERA_SERVICES, *LEARNED_SERVICES, "carrotMan", "carrotNavi"])
+                            *CAMERA_SERVICES, *LEARNED_SERVICES, "carrotMan", "carrotNavi",
+                            "navInstructionCarrot"])
   writer = None
   scene_writer = None
   inventory_writer = None
@@ -285,7 +286,8 @@ def main() -> None:
           sm[PLAN_SERVICE] if sm.seen[PLAN_SERVICE] else None, scene_camera(sm),
           scene_settings(params, sm) if scene_count % SCENE_SETTINGS_EVERY_FRAMES == 0 else None,
           scene_nav(sm["carrotMan"] if sm.seen["carrotMan"] else None, sm["carState"],
-                    sm["carrotNavi"] if sm.seen["carrotNavi"] else None),
+                    sm["carrotNavi"] if sm.seen["carrotNavi"] else None,
+                    sm["navInstructionCarrot"] if sm.seen["navInstructionCarrot"] else None),
         )
         scene_count += 1
         next_scene_time = monotonic_now + SCENE_INTERVAL_SECONDS
