@@ -42,7 +42,12 @@ SCENE_SETTING_KEYS = ("UseLaneLineSpeed", "PathOffset", "CameraYawTrimDeg", "Adj
                       "LatSmoothSec", "CustomSR", "LatMpcPathCost", "LatMpcInputOffset",
                       # Longitudinal/radar settings for the radar review.
                       "EnableRadarTracks", "LongitudinalPersonality", "TFollowGap1", "TFollowGap2", "TFollowGap3",
-                      "TFollowGap4", "StopDistanceCarrot", "LeadAccelResponse", "SpeedTFFactor", "TFollowDecelBoost")
+                      "TFollowGap4", "StopDistanceCarrot", "LeadAccelResponse", "SpeedTFFactor", "TFollowDecelBoost",
+                      # Longitudinal-control settings for the server's long-control settings review.
+                      "AutoCurveSpeedLowerLimit", "AutoCurveSpeedFactor", "AChangeCostStarting",
+                      *(f"CruiseMaxVals{index}" for index in range(7)), "SpeedFromPCM", "CruiseOnDist",
+                      "MyDrivingMode", "LongActuatorDelay", "StoppingAccel", "VEgoStopping", "RecordRoadCam",
+                      "AutoCruiseControl", "HyundaiCameraSCC")
 SCENE_SETTINGS_EVERY_FRAMES = 50
 LEARNED_SERVICES = ("liveParameters", "liveDelay")
 
@@ -55,7 +60,11 @@ def scene_settings(params, sm=None):
     except Exception:
       continue
   try:
-    values["Wheelbase"] = float(messaging.log_from_bytes(params.get("CarParams"), car.CarParams).wheelbase)
+    car_params = messaging.log_from_bytes(params.get("CarParams"), car.CarParams)
+    values["Wheelbase"] = float(car_params.wheelbase)
+    # Whether openpilot or the stock cruise controls speed decides which settings apply.
+    values["OpenpilotLongitudinal"] = float(car_params.openpilotLongitudinalControl)
+    values["PcmCruise"] = float(car_params.pcmCruise)
   except Exception:
     pass
   # Online-learned steering values, compared with CustomSR/SteerActuatorDelay on the server.
