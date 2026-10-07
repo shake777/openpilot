@@ -12,7 +12,6 @@ uploads them. Run on the C4 with the openpilot venv python:
 import argparse
 import json
 import os
-import subprocess
 import sys
 import uuid
 from collections import deque
@@ -115,14 +114,8 @@ def extract_video(qcamera: Path, target: Path) -> int:
   return frames
 
 
-def video_size(qcamera: Path) -> tuple[int, int]:
-  result = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
-                           "-of", "csv=p=0", str(qcamera)], capture_output=True, text=True, check=False)
-  try:
-    width, height = (int(value) for value in result.stdout.strip().split(",")[:2])
-    return width, height
-  except ValueError:
-    return 0, 0
+# openpilot's qcamera stream is always 526x330 (the C4's ffprobe is not on the service PATH).
+QCAMERA_SIZE = (526, 330)
 
 
 class Backfill:
@@ -203,7 +196,7 @@ class Backfill:
     frames = [event for event in events if event.which() == "qRoadEncodeIdx"]
     qcamera = segment / "qcamera.ts"
     if frames and qcamera.is_file():
-      self.video = (qcamera, frames[0].logMonoTime, video_size(qcamera))
+      self.video = (qcamera, frames[0].logMonoTime, QCAMERA_SIZE)
 
   def handle(self, event) -> None:
     kind = event.which()
