@@ -67,18 +67,52 @@ def read_events(rlog: Path):
   return events
 
 
-def extract_video(qcamera: Path, target: Path) -> bool:
-  """First 30 s of the segment's qcamera.ts as Annex-B H.264 (the live bundle format)."""
+def ts_h264(data: bytes, seconds: float) -> tuple[bytes, int]:
+  """The first `seconds` of the H.264 stream in an MPEG-TS file (already Annex-B), and its frame count.
+
+  The C4's ffmpeg has no raw h264 muxer, so the transport stream is unpacked here.
+  """
+  out = bytearray()
+  video_pid = first_pts = None
+  frames = 0
+  for offset in range(0, len(data) - 187, 188):
+    packet = data[offset:offset + 188]
+    if packet[0] != 0x47:
+      continue
+    pid = ((packet[1] & 0x1F) << 8) | packet[2]
+    adaptation = (packet[3] >> 4) & 0x3
+    start = 4 + (1 + packet[4] if adaptation & 0x2 else 0)
+    if not adaptation & 0x1 or start >= 188:
+      continue
+    payload = packet[start:]
+    if packet[1] & 0x40 and payload[:3] == b"\x00\x00\x01" and 0xE0 <= payload[3] <= 0xEF:
+      if video_pid is None:
+        video_pid = pid
+      if pid != video_pid or len(payload) < 9:
+        continue
+      if payload[7] & 0x80 and len(payload) >= 14:
+        b = payload[9:14]
+        pts = ((b[0] >> 1) & 0x7) << 30 | b[1] << 22 | (b[2] >> 1) << 15 | b[3] << 7 | b[4] >> 1
+        first_pts = pts if first_pts is None else first_pts
+        if (pts - first_pts) / 90000 >= seconds:
+          break
+      frames += 1
+      out += payload[9 + payload[8]:]
+    elif pid == video_pid:
+      out += payload
+  return bytes(out), frames
+
+
+def extract_video(qcamera: Path, target: Path) -> int:
+  """Write the first 30 s of the segment's qcamera.ts as Annex-B H.264 (the live bundle format); returns frames."""
+  stream, frames = ts_h264(qcamera.read_bytes(), VIDEO_DURATION_SECONDS)
+  if not stream or not frames or len(stream) > MAX_QCAMERA_BYTES:
+    return 0
   partial = target.with_name(target.name + ".partial")
-  result = subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(qcamera), "-t", str(VIDEO_DURATION_SECONDS),
-                           "-c:v", "copy", "-an", "-bsf:v", "h264_mp4toannexb", "-f", "h264", str(partial)],
-                          capture_output=True, check=False)
-  if result.returncode != 0 or not partial.is_file() or not 0 < partial.stat().st_size <= MAX_QCAMERA_BYTES:
-    partial.unlink(missing_ok=True)
-    return False
+  partial.write_bytes(stream)
   os.replace(partial, target)
   os.chmod(target, 0o600)
-  return True
+  return frames
 
 
 def video_size(qcamera: Path) -> tuple[int, int]:
@@ -142,9 +176,10 @@ class Backfill:
       if self.bundle_event is not None:
         write_event_companion(capture, *self.bundle_event)
       if video is not None:
-        qcamera, started_ns, frames, size = video
+        qcamera, started_ns, size = video
         target = capture.with_suffix(".qcamera.h264")
-        if extract_video(qcamera, target):
+        frames = extract_video(qcamera, target)
+        if frames:
           target.with_suffix(".json").write_text(json.dumps({
             "schema": "c4-qcamera-video-v1", "codec": "h264", "container": "annex-b", "started_mono_ns": started_ns,
             "duration_s": VIDEO_DURATION_SECONDS, "frames": frames, "width": size[0], "height": size[1],
@@ -168,9 +203,7 @@ class Backfill:
     frames = [event for event in events if event.which() == "qRoadEncodeIdx"]
     qcamera = segment / "qcamera.ts"
     if frames and qcamera.is_file():
-      start = frames[0].logMonoTime
-      count = sum(1 for event in frames if event.logMonoTime - start < VIDEO_DURATION_SECONDS * 1e9)
-      self.video = (qcamera, start, count, video_size(qcamera))
+      self.video = (qcamera, frames[0].logMonoTime, video_size(qcamera))
 
   def handle(self, event) -> None:
     kind = event.which()

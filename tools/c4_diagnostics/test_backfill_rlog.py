@@ -24,6 +24,28 @@ class BackfillTest(unittest.TestCase):
     self.assertEqual(capture_id("r", 5), capture_id("r", 5))
     self.assertNotEqual(capture_id("r", 5), capture_id("r", 6))
 
+  def test_transport_stream_video_is_cut_at_thirty_seconds(self):
+    from tools.c4_diagnostics.backfill_rlog import ts_h264
+
+    def pts_bytes(pts):
+      return bytes([0x21 | ((pts >> 29) & 0x0E), (pts >> 22) & 0xFF, ((pts >> 14) & 0xFE) | 1, (pts >> 7) & 0xFF,
+                    ((pts << 1) & 0xFE) | 1])
+
+    def packet(pid, payload, start):
+      header = bytes([0x47, (0x40 if start else 0) | (pid >> 8), pid & 0xFF, 0x10])
+      return (header + payload).ljust(188, b"\xff")
+
+    stream = b""
+    for index in range(40):  # one frame per second
+      nal = b"\x00\x00\x00\x01" + bytes([0x65, index])
+      pes = b"\x00\x00\x01\xe0\x00\x00\x80\x80\x05" + pts_bytes(index * 90000) + nal
+      stream += packet(0x100, pes, True)
+      stream += packet(0x101, b"audio", True)
+    data, frames = ts_h264(stream, 30.0)
+    self.assertEqual(frames, 30)
+    self.assertTrue(data.startswith(b"\x00\x00\x00\x01\x65\x00"))
+    self.assertNotIn(b"audio", data)
+
   def test_periodic_bundles_every_ten_minutes_and_reruns_skip_existing(self):
     with tempfile.TemporaryDirectory() as directory:
       spool = Path(directory)
