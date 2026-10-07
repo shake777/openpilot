@@ -47,7 +47,11 @@ SCENE_SETTING_KEYS = ("UseLaneLineSpeed", "PathOffset", "CameraYawTrimDeg", "Adj
                       "AutoCurveSpeedLowerLimit", "AutoCurveSpeedFactor", "AChangeCostStarting",
                       *(f"CruiseMaxVals{index}" for index in range(7)), "SpeedFromPCM", "CruiseOnDist",
                       "MyDrivingMode", "LongActuatorDelay", "StoppingAccel", "VEgoStopping", "RecordRoadCam",
-                      "AutoCruiseControl", "HyundaiCameraSCC")
+                      "AutoCruiseControl", "HyundaiCameraSCC",
+                      # Torque-steering response settings for the server's sharp-curve review.
+                      "CustomSteerDeltaUp", "CustomSteerDeltaDown", "CustomSteerMax", "LateralTorqueCustom",
+                      "LateralTorqueKpV", "LateralTorqueKiV", "LateralTorqueKf", "LateralTorqueAccelFactor",
+                      "LateralTorqueFriction")
 SCENE_SETTINGS_EVERY_FRAMES = 50
 LEARNED_SERVICES = ("liveParameters", "liveDelay")
 
