@@ -374,7 +374,7 @@ def put_typed(params: "Params", key: str, value: Any, p: Optional[Dict[str, Any]
 # RouteCount=54 on a K7 (2026-10-03), so new routes 0x36.. sorted before older 0x44.. and the deleter
 # removed every new recording except each route's locked last segment.
 DEVICE_COUNTER_PARAMS = frozenset({"RouteCount", "BootCount", "LastUpdateRouteCount"})
-INTERNAL_SESSION_PARAMS = frozenset({"DriverMonitoringSessionDisabled"}) | DEVICE_COUNTER_PARAMS
+INTERNAL_SESSION_PARAMS = frozenset({"DriverMonitoringSessionDisabled", "JetsonLegacyUpdatePending"}) | DEVICE_COUNTER_PARAMS
 BACKUP_EXCLUDED_PARAMS = frozenset({"DriverMonitoringEnabled"})
 
 
