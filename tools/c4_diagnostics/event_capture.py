@@ -56,7 +56,8 @@ class EventDetector:
     reason = None
     if long_active and brake_pressed and not self.prev_brake:
       reason = "driver_brake"
-    hard = long_active and target_accel <= HARD_BRAKE_ACCEL
+    # At standstill the stop-hold request (often -2.0) is not braking (2026-10-07 false events).
+    hard = long_active and target_accel <= HARD_BRAKE_ACCEL and v_ego >= RESTART_SPEED_MS
     if reason is None and hard and not self.prev_hard:
       reason = "hard_brake"
     if v_ego >= STOP_FROM_SPEED_MS:

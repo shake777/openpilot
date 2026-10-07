@@ -26,6 +26,12 @@ class EventCaptureTests(unittest.TestCase):
     detector = EventDetector()
     self.assertIsNone(detector.update(0, 10.0, True, False, 0.0, True))
 
+  def test_standstill_hold_is_not_a_hard_brake(self):
+    detector = EventDetector()
+    self.assertIsNone(detector.update(0, 0.0, False, True, -2.0, False))
+    self.assertIsNone(detector.update(int(1e8), 0.5, False, True, -2.5, False))
+    self.assertEqual(detector.update(int(2e8), 5.0, False, True, -2.5, True), "hard_brake")
+
   def test_hard_brake_edge(self):
     detector = EventDetector()
     self.assertIsNone(detector.update(0, 15.0, False, True, -1.9, True))
