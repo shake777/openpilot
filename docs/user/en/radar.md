@@ -20,7 +20,7 @@ A radar fitted to the vehicle does not guarantee that carrotpilot can read the r
 | `-2` | VOACC vision-only experiment | Development testing only |
 | `-1` | Always use SCC range and relative speed without vision matching; use vision if SCC is absent | Confirm the vehicle configuration |
 | `0` | Always use SCC range and relative speed; use vision if SCC is absent | Default; same SCC-only policy as `-1` |
-| `1` | Match raw front-radar tracks to vision without SCC; use vision if matching fails | Requires vehicle-specific activation and message support |
+| `1` | Match raw front-radar tracks to vision without SCC; use vision if matching fails. On a K7 2020 (`KIA_K7_PE`) with the `0x238–0x255` objects, use those objects instead of `0x500` tracks | Requires vehicle-specific activation and message support |
 | `2` | Match front-radar tracks and low-speed SCC to vision; use vision if matching fails | Test only on an identical validated configuration |
 | `3` | Match front radar to vision first; if it fails, always use SCC, then vision if SCC is absent | Experimental; false detections are possible |
 | `4` | Read pre-enabled raw front-radar tracks while retaining stock longitudinal control | Activation-result observation only |
@@ -31,6 +31,8 @@ On non-CAN FD Hyundai/Kia vehicles, values `1` through `3` attempt to enable rad
 Unlike positive modes, `-1` does not change the ECU diagnostic session or radar configuration and does not automatically enable openpilot longitudinal control. It keeps stock SCC/AEB and only reads the single SCC11 lead range, relative speed, and lateral position.
 
 `4` sends no ECU activation command and does not enable openpilot longitudinal control. It only checks whether pre-enabled raw `0x500–0x53F` tracks are actually received after a separate stationary test.
+
+On a K7 2020 where the `0x238–0x255` objects are detected, `1` also uses the object handling, candidate rules and following behaviour of `5` below, and skips the `0x500` track-activation write and `0x500` parser that this radar does not support. Unlike `5`, `1` still enables openpilot longitudinal control and silences the stock SCC at startup, as `1` always does. `2` and `3` combine SCC and are unchanged, as is `1` on every other car.
 
 `5` reads the `0x238–0x255` objects (10 slots × 3 frames) that the K7 2020 already transmits on bus 1. It is selected only when all 30 addresses are received at startup and no `0x500` tracks exist; on other vehicles or when these conditions are not met, it behaves like `0`. It performs no ECU diagnostic or configuration write and does not force openpilot longitudinal control, so longitudinal control follows the existing alpha longitudinal setting. For lead selection it behaves like `1`, matching only front radar to vision without SCC. It follows that lead the way a vision lead is followed: radar distance and speed are used, but the radar-only extras (holding an opening gap as extra headroom up to 2.5 s, the `LeadAccelResponse` catch-up boost and the lead-deceleration preview) are not applied, so the configured following time is kept. Instead, while the lead is slower and the gap is closing (by more than about 2 km/h, within 150 m), additional acceleration is faded out even when the gap is still long. This avoids accelerating toward a distant slower car and then braking; it never requests braking and is not applied while the accelerator is pressed or during a lane change.
 

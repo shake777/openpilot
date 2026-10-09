@@ -7,6 +7,7 @@ from opendbc.car import Bus, structs
 import opendbc.car.hyundai.hyundaicanfd as hyundaicanfd
 import opendbc.car.hyundai.radar_interface as radar_interface_module
 from opendbc.car.hyundai.radar_interface import (
+  CLASSIC_238_TRACK_ID_OFFSET,
   CORNER_OBJECT_STABLE_TRACK_ID_START,
   RADAR_MSG_COUNT,
   RADAR_MSG_COUNT3,
@@ -547,6 +548,18 @@ class TestK7Classic238RadarMode:
         radar_data = updated
     return radar_data
 
+  def test_mode1_uses_classic_stream_only_when_selected(self, monkeypatch):
+    radar_interface = self.make_interface(monkeypatch, mode=1)
+    assert radar_interface.classic_238
+    assert radar_interface.rcp_tracks is None
+    radar_data = self.publish(radar_interface, 1_000_000_000, {0: {}})
+    assert radar_data is not None and not radar_data.errors.canError
+    assert any(point.trackId >= CLASSIC_238_TRACK_ID_OFFSET for point in radar_data.points)
+
+    legacy = self.make_interface(monkeypatch, mode=1, classic_flag=False)
+    assert not legacy.classic_238
+    assert legacy.rcp_tracks is not None
+
   def test_mode5_uses_classic_stream_without_legacy_parser(self, monkeypatch):
     radar_interface = self.make_interface(monkeypatch)
     assert radar_interface.classic_238
@@ -654,7 +667,9 @@ class TestK7Classic238RadarMode:
     assert radar_interface.rcp_tracks is None
     assert radar_interface.rcp_scc is not None
 
-  def test_existing_mode1_keeps_legacy_parser(self, monkeypatch):
-    radar_interface = self.make_interface(monkeypatch, mode=1, classic_flag=True)
+  @pytest.mark.parametrize("mode", (2, 3))
+  def test_scc_modes_keep_legacy_parser(self, monkeypatch, mode):
+    # Modes 2/3 combine radar tracks with SCC and never read the K7 0x238 stream.
+    radar_interface = self.make_interface(monkeypatch, mode=mode, classic_flag=True)
     assert not radar_interface.classic_238
     assert radar_interface.rcp_tracks is not None

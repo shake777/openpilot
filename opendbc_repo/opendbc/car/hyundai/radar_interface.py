@@ -14,6 +14,7 @@ from opendbc.car.hyundai.radar_classic_238 import (
   CLASSIC_238_END_ADDR,
   CLASSIC_238_MAX_TRIPLET_AGE_NS,
   CLASSIC_238_START_ADDR,
+  CLASSIC_238_TRACK_MODES,
   RADAR_TRACK_MODE_CLASSIC_238,
   Classic238DisplayTracker,
   classic_238_longitudinal_tracks,
@@ -295,9 +296,9 @@ class RadarInterface(RadarInterfaceBase):
 
     self.params = Params()
     radar_track_mode = self.params.get_int("EnableRadarTracks")
-    # Mode 5 is valid only when the car interface selected the K7 0x238 stream;
-    # otherwise it behaves exactly like mode 0.
-    self.classic_238 = (not self.canfd and radar_track_mode == RADAR_TRACK_MODE_CLASSIC_238 and
+    # Modes 1 and 5 read the K7 0x238 stream only when the car interface selected it; otherwise
+    # mode 1 keeps its 0x500 tracks and mode 5 behaves exactly like mode 0.
+    self.classic_238 = (not self.canfd and radar_track_mode in CLASSIC_238_TRACK_MODES and
                         bool(CP.extFlags & HyundaiExtFlags.RADAR_CLASSIC_238.value))
     self.radar_tracks = self.classic_238 or (radar_track_mode >= 1 and radar_track_mode != RADAR_TRACK_MODE_CLASSIC_238)
     self.corner_object_tracks = bool(CP.extFlags & HyundaiExtFlags.CORNER_RADAR_OBJECTS_235.value) and self.params.get_int("EnableCornerRadar") > 0

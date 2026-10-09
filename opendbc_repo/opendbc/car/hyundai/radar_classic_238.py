@@ -310,6 +310,9 @@ def classic_238_address_role(address: int) -> tuple[int, int]:
 # EnableRadarTracks value that selects this stream for KIA_K7_PE lead selection.
 # It performs no ECU write and does not require legacy 0x500 tracks.
 RADAR_TRACK_MODE_CLASSIC_238 = 5
+# Mode 1 ("front radar without SCC") also reads this stream on a KIA_K7_PE that has it, since that
+# radar has no 0x500 tracks to enable (2026-10-09). Modes 2/3 use SCC and stay unchanged.
+CLASSIC_238_TRACK_MODES = frozenset({1, RADAR_TRACK_MODE_CLASSIC_238})
 # Status 2 is a confirmed moving object. Status 6 is the same object ID and
 # position continuing as the near in-lane lead in stop-and-go (2026-09-29: 65%
 # in lane, median 4.5 m, range within ~0.4 m of status 2 against vision); without

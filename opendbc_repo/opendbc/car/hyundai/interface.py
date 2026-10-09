@@ -6,7 +6,7 @@ from opendbc.car.hyundai.values import HyundaiFlags, CAR, DBC, CANFD_RADAR_SCC_C
                                                    CANFD_HYBRID_STATUS_ADDR, CANFD_HYBRID_STATUS_DLC, \
                                                    EV_MODE_STATUS_ADDR, EV_MODE_STATUS_DLC
 from opendbc.car.hyundai.radar_interface import RADAR_START_ADDR
-from opendbc.car.hyundai.radar_classic_238 import RADAR_TRACK_MODE_CLASSIC_238, classic_238_radar_available
+from opendbc.car.hyundai.radar_classic_238 import CLASSIC_238_TRACK_MODES, RADAR_TRACK_MODE_CLASSIC_238, classic_238_radar_available
 from opendbc.car.interfaces import CarInterfaceBase
 from opendbc.car.disable_ecu import disable_ecu
 from opendbc.car.hyundai.carcontroller import CarController
@@ -198,15 +198,17 @@ class CarInterface(CarInterfaceBase):
 
     # carrot, if camera_scc enabled, enable openpilotLongitudinalControl
     enable_radar_tracks = params.get_int("EnableRadarTracks")
-    if enable_radar_tracks == RADAR_TRACK_MODE_CLASSIC_238:
-      # K7 classic 0x238 objects: no ECU write, no 0x500 parser, and no forced
-      # openpilot longitudinal. Other cars treat 5 exactly like 0.
+    if enable_radar_tracks in CLASSIC_238_TRACK_MODES:
+      # K7 classic 0x238 objects: no ECU write and no 0x500 parser. Mode 5 does not force
+      # openpilot longitudinal (other cars treat 5 exactly like 0); mode 1 keeps its usual
+      # openpilot longitudinal and, on other cars, its 0x500 tracks.
       if (candidate == CAR.KIA_K7_PE and not ret.flags & HyundaiFlags.CANFD and
           classic_238_radar_available(fingerprint[1])):
         ret.extFlags |= HyundaiExtFlags.RADAR_CLASSIC_238.value
         ret.radarUnavailable = False
-        print("##### K7 classic 0x238 radar objects selected (EnableRadarTracks=5)")
-      enable_radar_tracks = 0
+        print(f"##### K7 classic 0x238 radar objects selected (EnableRadarTracks={enable_radar_tracks})")
+      if enable_radar_tracks == RADAR_TRACK_MODE_CLASSIC_238:
+        enable_radar_tracks = 0
     if enable_radar_tracks == -1:
       # SCC-only mode uses the stock SCC11 object as a read-only RadarPoint.
       # It does not require raw 0x500 tracks, ECU diagnostics, or openpilot longitudinal control.
@@ -289,7 +291,9 @@ class CarInterface(CarInterfaceBase):
       disable_ecu(can_recv, can_send, bus=bus, addr=addr, com_cont_req=b'\x28\x83\x01')
 
     params = Params()
-    if 1 <= params.get_int("EnableRadarTracks") <= 3 and not CP.flags & HyundaiFlags.CANFD:
+    # The K7 0x238 stream needs no track activation; that radar has no 0x500 tracks to enable.
+    if (1 <= params.get_int("EnableRadarTracks") <= 3 and not CP.flags & HyundaiFlags.CANFD
+        and not CP.extFlags & HyundaiExtFlags.RADAR_CLASSIC_238.value):
       result = enable_radar_tracks(CP, can_recv, can_send)
       params.put_bool("EnableRadarTracksResult", result)
 

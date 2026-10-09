@@ -119,6 +119,39 @@ class TestHyundaiFingerprint:
     monkeypatch.setattr(interface_module, "disable_ecu", unexpected_radar_write)
     CarInterface.init(CP, lambda *args, **kwargs: [], lambda *args, **kwargs: None)
 
+  def test_k7_mode1_reads_classic_238_without_activating_tracks(self, monkeypatch):
+    monkeypatch.setattr(interface_module, "Params", self.classic_238_params(1))
+    CP = CarInterface.get_params(CAR.KIA_K7_PE, self.classic_238_fingerprint(), [], False, False, False)
+
+    assert CP.extFlags & HyundaiExtFlags.RADAR_CLASSIC_238
+    assert not CP.radarUnavailable
+    # Mode 1 keeps its usual openpilot longitudinal (the stock SCC is silenced at init).
+    assert CP.openpilotLongitudinalControl
+
+    def unexpected_radar_write(*args, **kwargs):
+      raise AssertionError("the K7 0x238 stream must not write the radar track configuration")
+
+    silenced = []
+    monkeypatch.setattr(interface_module, "enable_radar_tracks", unexpected_radar_write)
+    monkeypatch.setattr(interface_module, "disable_ecu", lambda *args, **kwargs: silenced.append(kwargs.get("addr")))
+    CarInterface.init(CP, lambda *args, **kwargs: [], lambda *args, **kwargs: None)
+    assert silenced == [0x7d0]
+
+  @pytest.mark.parametrize("car, legacy_tracks", ((CAR.KIA_K7, False), (CAR.KIA_K7_PE, True), (CAR.HYUNDAI_SONATA, False)))
+  def test_mode1_elsewhere_still_activates_legacy_tracks(self, monkeypatch, car, legacy_tracks):
+    fingerprint = self.classic_238_fingerprint() if car != CAR.HYUNDAI_SONATA else gen_empty_fingerprint()
+    if legacy_tracks:
+      fingerprint[1][RADAR_START_ADDR] = 8
+    monkeypatch.setattr(interface_module, "Params", self.classic_238_params(1))
+    CP = CarInterface.get_params(car, fingerprint, [], False, False, False)
+
+    assert not CP.extFlags & HyundaiExtFlags.RADAR_CLASSIC_238
+    activated = []
+    monkeypatch.setattr(interface_module, "enable_radar_tracks", lambda *args, **kwargs: activated.append(True) or True)
+    monkeypatch.setattr(interface_module, "disable_ecu", lambda *args, **kwargs: None)
+    CarInterface.init(CP, lambda *args, **kwargs: [], lambda *args, **kwargs: None)
+    assert activated == ([True] if not CP.flags & HyundaiFlags.CANFD else [])
+
   @pytest.mark.parametrize("car, legacy_tracks", ((CAR.KIA_K7, False), (CAR.KIA_K7_PE, True)))
   def test_classic_238_mode_falls_back_to_mode0(self, monkeypatch, car, legacy_tracks):
     fingerprint = self.classic_238_fingerprint()
