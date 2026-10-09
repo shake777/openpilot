@@ -190,13 +190,14 @@ class TestRadarCapture(unittest.TestCase):
                                  v=IntegerOnlyList([8.0]), a=IntegerOnlyList([-0.1]))
     frame = build_scene_frame(
       123,
-      SimpleNamespace(vEgo=10.0, vCruise=60.0, steeringAngleDeg=2.0, aEgo=-0.3, gasPressed=False, brakePressed=True,
+      SimpleNamespace(vEgo=10.0, vCruise=60.0, steeringAngleDeg=2.0, steeringRateDeg=-4.5, steeringTorque=12.0,
+                      steeringTorqueEps=80.0, aEgo=-0.3, gasPressed=False, brakePressed=True,
                       standstill=False, steeringPressed=False, leftBlindspot=True, rightBlindspot=False),
       SimpleNamespace(position=xy, laneLines=IntegerOnlyList([xy] * 4),
                       laneLineProbs=IntegerOnlyList([0.9] * 4), leadsV3=IntegerOnlyList([model_lead])),
       SimpleNamespace(points=IntegerOnlyList([radar_point])),
       SimpleNamespace(leadOne=lead, leadTwo=lead),
-      SimpleNamespace(longActive=True, enabled=True, actuators=SimpleNamespace(accel=-0.5)),
+      SimpleNamespace(longActive=True, enabled=True, actuators=SimpleNamespace(accel=-0.5, torque=0.25)),
       SimpleNamespace(tFollow=1.1, desiredDistance=16.5),
       {"calib": [0.0, 0.02, -0.01, 1.3], "cam": [1344, 760, 1141.5]},
       {"PathOffset": 0.0, "CameraYawTrimDeg": -10.0},
@@ -213,6 +214,8 @@ class TestRadarCapture(unittest.TestCase):
     self.assertEqual(saved["target_accel"], -0.5)
     self.assertEqual((saved["a_ego"], saved["brake_pressed"], saved["left_blindspot"]), (-0.3, True, True))
     self.assertEqual((saved["t_follow"], saved["desired_distance"]), (1.1, 16.5))
+    self.assertEqual((saved["steering_rate_deg"], saved["steer_cmd"], saved["steering_torque"], saved["steering_torque_eps"]),
+                     (-4.5, 0.25, 12.0, 80.0))
     self.assertEqual((saved["calib"], saved["cam"]), ([0.0, 0.02, -0.01, 1.3], [1344, 760, 1141.5]))
     self.assertEqual(saved["settings"], {"PathOffset": 0.0, "CameraYawTrimDeg": -10.0})
     self.assertEqual(saved["v_cruise"], 60.0)

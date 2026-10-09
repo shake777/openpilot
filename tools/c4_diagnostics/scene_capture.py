@@ -153,6 +153,12 @@ def build_scene_frame(mono_time: int, car_state, model, live_tracks, radar_state
     # Set speed (km/h); lets the server tell a long gap caused by the cruise speed cap apart.
     "v_cruise": _number(getattr(car_state, "vCruise", None)),
     "steering_angle_deg": _number(car_state.steeringAngleDeg),
+    # Fast steering-wobble review (2026-10-09): wheel rate, the lateral torque command [-1, 1],
+    # and the driver/EPS torques the car reports.
+    "steering_rate_deg": _number(getattr(car_state, "steeringRateDeg", None)),
+    "steer_cmd": _number(getattr(car_control.actuators, "torque", None)),
+    "steering_torque": _number(getattr(car_state, "steeringTorque", None)),
+    "steering_torque_eps": _number(getattr(car_state, "steeringTorqueEps", None)),
     "points": [_radar_point(point) for point in _take(live_tracks.points, 64)],
     "path": _xy(model.position),
     "lane_lines": lane_lines,
