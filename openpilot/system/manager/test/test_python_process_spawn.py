@@ -41,4 +41,6 @@ def test_only_deferred_xiaoge_selects_spawn():
   calls = [n for n in ast.walk(ast.parse(path.read_text(encoding='utf-8')))
            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == 'PythonProcess']
   selected = [n.args[0].value for n in calls if any(k.arg == 'spawn' and ast.literal_eval(k.value) for k in n.keywords)]
-  assert selected == ['xiaoge_data']
+  # carrot-wip-custom: the C4 diagnostics uploader also starts fresh so an in-place pull cannot
+  # leave it importing a mix of preimported and updated modules.
+  assert selected == ['c4_diagnostics', 'xiaoge_data']

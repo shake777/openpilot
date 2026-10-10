@@ -161,7 +161,10 @@ procs = [
   PythonProcess("updated", "openpilot.system.updated.updated", enable_updated, enabled=not PC),
   #PythonProcess("uploader", "openpilot.system.loggerd.uploader", enable_connect),
   PythonProcess("statsd", "openpilot.system.statsd", always_run),
-  PythonProcess("c4_diagnostics", "openpilot.system.c4_diagnostics", always_run, enabled=not PC),
+  # A fresh interpreter on every start: forking the manager reused modules preimported before an
+  # in-place git pull, and the mixed old/new tools.c4_diagnostics modules failed to import on every
+  # restart until the next reboot (2026-10-07 ImportError), silently stopping all uploads.
+  PythonProcess("c4_diagnostics", "openpilot.system.c4_diagnostics", always_run, enabled=not PC, spawn=True),
   PythonProcess("feedbackd", "openpilot.selfdrive.ui.feedback.feedbackd", only_onroad),
 
   # debug procs
