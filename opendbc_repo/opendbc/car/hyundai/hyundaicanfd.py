@@ -5,7 +5,7 @@ from opendbc.car import CanBusBase, DT_CTRL
 from opendbc.car.carlog import carlog
 from opendbc.car.crc import CRC16_XMODEM
 from opendbc.car.hyundai.values import HyundaiFlags, HyundaiExtFlags
-from opendbc.car.hyundai.stopping import MOVING_SPEED
+from opendbc.car.hyundai.stopping import MOVING_SPEED, STOP_LOWER_BAND
 from openpilot.common.params import Params
 from openpilot.common.filter_simple import FirstOrderFilter
 from opendbc.car.common.conversions import Conversions as CV
@@ -31,7 +31,7 @@ def apply_accel_jerk_limit(a_raw: float, a_value_last: float, jerk_u: float, jer
 
 
 def apply_canfd_stopping(values, CS, controller, accel, previous_value, jerk_u, jerk_l):
-  """Apply the stopping/re-entry sequence after the normal SCC interlocks."""
+  """Apply the zero-aReq stopping sequence after the normal SCC interlocks."""
   if controller is None:
     return
 
@@ -47,26 +47,31 @@ def apply_canfd_stopping(values, CS, controller, accel, previous_value, jerk_u, 
              or str(CS.out.gearShifter) != "drive" or longitudinal_interlock_active(CS))
   previous_phase = controller.phase
   command = controller.update(
-    active=values["ACCMode"] == 1 and not blocked, requested=bool(values["StopReq"]), speed=speed, a_ego=CS.out.aEgo,
-    held=CS.canfdSccHoldActive, accel=accel, value=values["aReqValue"], previous_value=previous_value,
+    active=values["ACCMode"] == 1 and not blocked, requested=bool(values["StopReq"]), speed=speed,
+    held=CS.canfdSccHoldActive, accel=accel, previous_value=previous_value,
     jerk_u=max(0.0, min(jerk_u, 5.0)), jerk_l=max(1.0, min(jerk_l, 5.0)),
   )
   if blocked or values["ACCMode"] != 1:
-    values.update(StopReq=0, aReqRaw=0.0, aReqValue=0.0)
+    values.update(StopReq=0, aReqRaw=0.0, aReqValue=0.0, AccelLimitBandLower=0.0)
     if not finite:
       values.update(ACCMode=0, JerkUpperLimit=1.0, JerkLowerLimit=1.0)
   elif command is not None:
     values.update(StopReq=command.stop_req, aReqRaw=command.raw, aReqValue=command.value,
                   AccelLimitBandUpper=0.0, AccelLimitBandLower=command.lower)
+  else:
+    # Establish the fixed band during ordinary active ACC, before any stop
+    # request. Approach/held packets retain it instead of adding a band edge
+    # alongside StopReq. This is a timing trial, not an OEM hold guarantee.
+    values["AccelLimitBandLower"] = STOP_LOWER_BAND
 
-  # Apply only to the final packet, after retry and interlocks have selected
-  # StopReq. Keep the existing acceleration calculation and stop timing.
+  # Apply only to the final packet, after approach and interlocks select StopReq.
+  # The first StopReq frame already carries zero Raw/Value; Upper may rise next.
   values["JerkUpperLimit"] = controller.limit_scc_jerk_upper(values["StopReq"], values["JerkUpperLimit"])
 
   if controller.phase != previous_phase:
     carlog.warning({"event": "carrot_stopping", "from": str(previous_phase), "phase": str(controller.phase),
                     "reason": controller.reason, "speed": speed, "aEgo": CS.out.aEgo,
-                    "held": CS.canfdSccHoldActive, "retry_used": controller.retried,
+                    "held": CS.canfdSccHoldActive,
                     "soft_hold": soft_hold,
                     "StopReq": values["StopReq"], "aReqRaw": values["aReqRaw"], "aReqValue": values["aReqValue"]})
 

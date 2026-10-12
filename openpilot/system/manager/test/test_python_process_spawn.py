@@ -42,5 +42,6 @@ def test_only_deferred_xiaoge_selects_spawn():
            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == 'PythonProcess']
   selected = [n.args[0].value for n in calls if any(k.arg == 'spawn' and ast.literal_eval(k.value) for k in n.keywords)]
   # carrot-wip-custom: the C4 diagnostics uploader also starts fresh so an in-place pull cannot
-  # leave it importing a mix of preimported and updated modules.
-  assert selected == ['c4_diagnostics', 'xiaoge_data']
+  # leave it importing a mix of preimported and updated modules. Upstream's signal-colour observer
+  # (signalcolord) also selects spawn.
+  assert selected == ['signalcolord', 'c4_diagnostics', 'xiaoge_data']
