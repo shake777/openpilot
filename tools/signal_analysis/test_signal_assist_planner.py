@@ -8,7 +8,7 @@ from openpilot.selfdrive.carrot.signal_assist import SignalAssist
 def inputs(speed=0., distance=100., lead=False):
   return dict(carState=NS(vCluRatio=1., softHoldActive=0, vEgo=speed, aEgo=0., vEgoCluster=speed,
                          gasPressed=False, brakePressed=False, steeringAngleDeg=0., leftBlinker=False, rightBlinker=False),
-              selfdriveState=NS(personality=1), radarState=NS(leadOne=NS(status=lead, dRel=10.)),
+              selfdriveState=NS(personality=1), radarState=NS(leadOne=NS(status=lead, dRel=10.), leadTwo=NS(status=False)),
               modelV2=NS(position=NS(x=[distance*i/32 for i in range(33)], y=[0.]*33),
                          velocity=NS(x=[speed]+[15.]*32), leadsV3=[]))
 
@@ -26,8 +26,9 @@ def planner():
   return cls(SignalAssist())
 
 
-def test_red_hold_wins_over_model_go_and_lead_handover():
+def test_red_hold_wins_over_model_go_outside_lead_handover_range():
   p = planner(); sm = inputs(lead=True)
+  sm['radarState'].leadOne.dRel = 102.
   run(p, sm, 'red')
   assert p.xState.name == 'e2eStopped' and p.stop_dist == 0 and p.v_cruise == 0
   run(p, sm, 'unknown', 1.)

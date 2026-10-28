@@ -1,4 +1,5 @@
 "use strict";
+import { renderLibrary } from "./model_library.js";
 
 const POLL_INTERVAL_MS = 2000;
 let pollTimer = null;
@@ -6,6 +7,12 @@ let lastStatus = null;
 let restartPending = false;
 
 const FALLBACK_STRINGS = {
+  recovering: "eGPU reconnecting",
+  recovering_detail: "The internal model remains in use while eGPU recovery is attempted, up to three times.",
+  recovery_ready: "eGPU READY",
+  recovery_ready_detail: "Test calculations passed. The internal model remains in use until the vehicle stops or you intervene with steering.",
+  recovery_stopped: "eGPU recovery stopped",
+  recovery_stopped_detail: "The internal model remains in use. Once parked, restart the comma. Recovery stopped because a check failed or the retry limit was reached.",
   title: "eGPU big model",
   checking: "Checking model",
   downloading: "Downloading",
@@ -33,7 +40,8 @@ const FALLBACK_STRINGS = {
   failure_download: "The server refused the download or the requested file is unavailable.",
   failure_storage: "Not enough free storage to install the eGPU package.",
   failure_install: "The eGPU package could not be installed or verified. The saved diagnostic report contains the cause.",
-  failure_rejected: "This model was blocked after an earlier runtime failure. The saved diagnostic report contains the cause.",
+  failure_rejected: "A previous failure blocked this model. Compiling again does not resolve a runtime failure. If it remains after a reboot, download the diagnostics and send them for support.",
+  diagnostics: "Download diagnostics",
   failure_runtime: "The eGPU could not start or continue running. The internal model is selected.",
   failure_pcie: "The eGPU connection could not start. The internal model is selected.",
   failure_timeout: "The eGPU took too long to respond. The internal model is selected.",
@@ -81,6 +89,10 @@ function modelDisplayName(status) {
   if (explicitName) return explicitName;
 
   const modelId = String(status?.model_id || "").toLowerCase();
+  if (modelId.includes("flip-flop")) return "Flip Flop";
+  if (modelId.includes("md-v3")) return "MD v3";
+  if (modelId.includes("nav-n16")) return "N16 Nav (NOO)";
+  if (modelId.includes("comma-nav-")) return "Nav Model (cf8f6120)";
   if (modelId.includes("pr39047") || modelId.includes("mdm-v1") || modelId.includes("6f4c0faf-256f2178") || modelId.includes("4bfb5340-e20cde17")) return "Mountain Dew";
   if (modelId.includes("pr38932") || modelId.includes("cinque-v3")) return "Cinque v3";
   if (modelId.includes("pr38823") || modelId.includes("cinque-v2")) return "Cinque v2";
@@ -100,6 +112,7 @@ function render(status = lastStatus) {
   const card = document.getElementById("egpuModelCard");
   if (!card) return;
   lastStatus = status;
+  renderLibrary(status?.library);
   if (!status?.available && !status?.jetlink) {
     card.hidden = true;
     return;
@@ -117,6 +130,11 @@ function render(status = lastStatus) {
   const progressBar = document.getElementById("egpuModelProgressBar");
   const amountEl = document.getElementById("egpuModelAmount");
   const action = document.getElementById("btnEgpuCompileRestart");
+  const diagnostics = document.getElementById("egpuModelDiagnostics");
+  if (diagnostics) {
+    diagnostics.hidden = !status.available || state !== "error" || !!status.active;
+    diagnostics.textContent = t("diagnostics");
+  }
 
   let hostEl = document.getElementById("jetlinkHealth");
   if (!hostEl) {
@@ -142,7 +160,7 @@ function render(status = lastStatus) {
     card.hidden = false;
     card.dataset.state = host.severity === "error" ? "error" : "compiled";
     card.classList.remove("is-running");
-    document.getElementById("egpuModelTitle").textContent = `${host.label} · Cinque v2`;
+    document.getElementById("egpuModelTitle").textContent = `${host.label} · ${status.library?.models?.find(m => m.id === status.library.effective)?.name || "Jetson"}`;
     stateEl.textContent = t(`host_${host.severity || "unknown"}`);
     detailEl.textContent = "";
     progressEl.hidden = true;
@@ -175,7 +193,7 @@ function render(status = lastStatus) {
     : (state === "compiling" ? elapsedText(status.started_at) : "");
 
   action.textContent = restartPending ? t("checking") : t("restart");
-  action.hidden = !["ready", "waiting_for_ignition", "error"].includes(state) || status.compiled;
+  action.hidden = !["ready", "waiting_for_ignition", "error"].includes(state) || status.compiled || status.error_code === "rejected";
   action.disabled = restartPending || !status.can_restart;
 }
 

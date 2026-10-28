@@ -369,6 +369,8 @@ def test_model_overlay_draw_order():
   renderer._draw_blind_spot_carrot = lambda _: calls.append("blindSpot")
   renderer._draw_radar_info_carrot = lambda _: calls.append("radar")
   renderer._draw_classic_radar_tracks_carrot = lambda _: calls.append("classicRadar")
+  renderer._render_diagnostics = SimpleNamespace(start=lambda: None, finish=lambda: None,
+                                                 call=lambda name, callback, *args: callback(*args), values={})
 
   renderer._draw_carrot_overlays(object())
 
@@ -422,6 +424,9 @@ def test_classic_track_matching_a_lead_keeps_only_a_small_dot(monkeypatch):
 def test_render_stale_data_skips_overlays(monkeypatch):
   renderer = object.__new__(model_renderer.ModelRenderer)
   calls = []
+  renderer._overlay_state = None
+  renderer._overlay = SimpleNamespace(draw=lambda rect, callback, key, **kwargs: callback(rect))
+  renderer._display_clock = SimpleNamespace(tick=lambda: None)
   renderer._draw_carrot_overlays = lambda _: calls.append("overlays")
   sm = SimpleNamespace(recv_frame={"liveCalibration": 0, "modelV2": 0})
   monkeypatch.setattr(model_renderer.ui_state, "sm", sm, raising=False)

@@ -45,6 +45,10 @@ struct CarrotMan @0x81c2f05a394cf4af {
 	vehicleNaviSpeed @30 : Int32;
 	vehicleNaviSectionActive @31 : Bool;
 	vehicleNaviAvailable @32 : Bool;
+	positionFixMonoTime @33 : UInt64; # original fix receipt, never renewed by dead reckoning
+	positionMonoTime @34 : UInt64; # time of the fused/predicted position
+	positionSource @35 :Text;
+	positionHeadingValid @36 :Bool;
 }
 
 struct CarrotNaviState @0xaedffd8f31e7b55d {
@@ -110,6 +114,7 @@ struct CarrotNaviState @0xaedffd8f31e7b55d {
 		guideLineColor @10 :Int16;
 		roadCategory @11 :Int16;
 		voiceCode @12 :Int16;
+		roadCategoryValid @13 :Bool; # explicit source field, not the default zero
 	}
 
 	struct Speed {

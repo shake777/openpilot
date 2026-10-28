@@ -147,10 +147,11 @@ def test_runtime_separate_endpoint_and_fresh_vehicle_context(tmp_path):
 
 @pytest.mark.parametrize('lead', [False, True])
 @pytest.mark.parametrize('mode', ['acc', 'blended'])
-def test_actual_planner_red_wins_model_go_lead_and_user_stop(lead, mode):
+def test_actual_planner_red_wins_model_go_outside_lead_range_and_user_stop(lead, mode):
   cls, _ = planner_class((REPO/'openpilot/selfdrive/carrot/carrot_functions.py').read_text(encoding='utf-8'))
   p = cls(start_guard=SignalStartGuard())
   sm = inputs(lead=lead)
+  sm['radarState'].leadOne.dRel = 102.
   warnings = []
   for i in range(30):
     t = i*.05
@@ -161,7 +162,7 @@ def test_actual_planner_red_wins_model_go_lead_and_user_stop(lead, mode):
     if i >= 3:
       assert p.start_decision.hold and p.v_cruise == 0 and p.stop_dist == 0 and p.xState.name == 'e2eStopped'
       assert p.mode == 'acc'
-  assert warnings.count('audioRefuse') == 1
+  assert warnings.count('audioRefuse') == (0 if lead else 1)
   sm['carState'].gasPressed = True
   p.update(sm, 80., 'acc', start_observation=observation(2),
            start_context=dict(now=2, enabled=True, valid=True, drive=True))
@@ -180,6 +181,45 @@ def test_actual_planner_green_does_not_override_original_stop():
   assert not p.start_decision.hold and p.v_cruise == 0 and p.xState.name == 'e2eStopped'
 
 
+@pytest.mark.parametrize('mode', ['acc', 'blended'])
+@pytest.mark.parametrize('model_go', [False, True])
+@pytest.mark.parametrize('inhibit', ['none', 'left_blinker', 'soft_hold', 'detect_only'])
+def test_confirmed_transition_supplies_normal_departure_with_driver_gates(mode, model_go, inhibit):
+  from openpilot.selfdrive.carrot.tests.test_signal_start_group import SMALL, RIGHT
+
+  cls, _ = planner_class((REPO/'openpilot/selfdrive/carrot/carrot_functions.py').read_text(encoding='utf-8'))
+  p = cls(start_guard=SignalStartGuard())
+  sm = inputs(distance=3.)
+  sm['modelV2'].velocity.x = [0.]*33
+  releases = []
+  for i in range(100):
+    t = i*.05
+    if i == 20:
+      if model_go:
+        sm['modelV2'].position.x = [100.*j/32 for j in range(33)]
+        sm['modelV2'].velocity.x = [0.]+[15.]*32
+      sm['carState'].leftBlinker = inhibit == 'left_blinker'
+      sm['carState'].softHoldActive = int(inhibit == 'soft_hold')
+      if inhibit == 'detect_only':
+        p.trafficLightDetectMode = 1
+    tracks = [(SMALL, 'red'), (RIGHT, 'red')] if i < 20 else [(RIGHT, 'green')]
+    obs = dict(timestamp=t, frame_id=i, session='camera', tracks=[dict(box=b, raw=c) for b, c in tracks])
+    p.update(sm, 80., mode, start_observation=obs,
+             start_context=dict(now=t+.2, enabled=True, valid=True, drive=True))
+    if p.start_decision.released:
+      releases.append(p.start_decision.reason)
+    if 4 <= i < 20:
+      assert p.start_decision.hold and p.xState.name == 'e2eStopped' and p.v_cruise == 0
+  assert releases == ['green_transition'] and not p.start_decision.hold
+  if inhibit == 'none':
+    assert p.xState.name == 'e2eCruise' and p.v_cruise > 0
+  elif inhibit == 'soft_hold':
+    # Soft hold is carried separately from the cruise speed setting.
+    assert p.xState.name == 'e2eStopped' and p.soft_hold_active > 0
+  else:
+    assert p.xState.name == 'e2eStopped' and p.v_cruise == 0
+
+
 @pytest.mark.parametrize('hold,accel', [(True, 1.2), (True, -1.5), (False, 1.2)])
 def test_production_output_veto_after_mpc_and_coasting(hold, accel):
   path = REPO/'openpilot/selfdrive/controls/lib/longitudinal_planner.py'
@@ -189,11 +229,11 @@ def test_production_output_veto_after_mpc_and_coasting(hold, accel):
   ns = {}
   exec(compile(ast.Module([method], type_ignores=[]), str(path), 'exec'), ns)
   p = NS(output_should_stop=False, output_v_target_now=2., output_a_target=accel)
-  p.apply_signal_start_guard = lambda carrot: ns['apply_signal_start_guard'](p, carrot)
+  p.apply_signal_start_guard = lambda carrot, speed: ns['apply_signal_start_guard'](p, carrot, speed)
   # Execute the real last output operations, including the preceding coast call.
   p.update_coasting = lambda *a: setattr(p, 'output_a_target', accel)
   p.apply_signal_stop_prepare = lambda *a: None
-  ns.update(self=p, carrot=NS(start_decision=NS(hold=hold)), sm={}, v_cruise_kph=80.,
+  ns.update(self=p, carrot=NS(start_decision=NS(hold=hold)), sm={}, v_cruise_kph=80., v_ego=0.,
             v_cruise=20., reset_state=False, force_slow_decel=False, coasting_turn_blocked=False, cutin_predecel_limit=None)
   exec(compile(ast.Module(update.body[-3:], type_ignores=[]), str(path), 'exec'), ns)
   assert p.output_should_stop == hold

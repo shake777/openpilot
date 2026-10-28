@@ -275,8 +275,30 @@ class MouseState:
       self._prev_mouse_event[slot] = ev
 
 
+def _make_framebuffer_reader():
+  if PC:
+    return rl.rl_get_active_framebuffer
+
+  # The ES2 raylib build stubs rlGetActiveFramebuffer to zero. Allocate once;
+  # the real ES2 binding query then needs no per-frame allocation or API lookup.
+  ffi = cffi.FFI()
+  ffi.cdef('void glGetIntegerv(unsigned int pname, int *data);')
+  gles = ffi.dlopen('libGLESv2.so')
+  binding = ffi.new('int *')
+
+  def read_framebuffer():
+    gles.glGetIntegerv(0x8CA6, binding)  # GL_FRAMEBUFFER_BINDING (ES2)
+    return binding[0]
+
+  return read_framebuffer
+
+
 class GuiApplication:
   def __init__(self, width: int | None = None, height: int | None = None):
+    # Capture the actual target after BeginDrawing: PLATFORM_COMMA binds its
+    # internal rotated_fb even when screen recording is disabled.
+    self.render_framebuffer = 0
+    self._read_framebuffer = rl.rl_get_active_framebuffer
     self._set_log_callback()
 
     self._fonts: dict[FontWeight, rl.Font] = {}
@@ -482,10 +504,13 @@ class GuiApplication:
 
   def init_window(self, title: str, fps: int = _DEFAULT_FPS, font_weights: Iterable[FontWeight] | None = None):
     with self._startup_profile_context():
+      self._closing = False
       def _close(sig, frame):
         self.close()
         sys.exit(0)
-      signal.signal(signal.SIGINT, _close)
+      for stop_signal in (signal.SIGINT, signal.SIGTERM, getattr(signal, 'SIGHUP', None)):
+        if stop_signal is not None:
+          signal.signal(stop_signal, _close)
       atexit.register(self.close)
 
       flags = rl.ConfigFlags.FLAG_MSAA_4X_HINT
@@ -494,6 +519,7 @@ class GuiApplication:
       rl.set_config_flags(flags)
 
       rl.init_window(self._scaled_width, self._scaled_height, title)
+      self._read_framebuffer = _make_framebuffer_reader()
 
       needs_render_texture = self._scale != 1.0 or BURN_IN_MODE or RECORD
       if self._scale != 1.0:
@@ -803,8 +829,14 @@ class GuiApplication:
           pass
 
   def close(self):
-    if not rl.is_window_ready():
+    if getattr(self, '_closing', False) or not rl.is_window_ready():
       return
+    self._closing = True
+
+    # EGL imports are not owned by the window's GL context. Widget reference
+    # cycles can keep their destructors from running before CloseWindow.
+    from openpilot.system.ui.lib.egl import destroy_all_egl_images
+    destroy_all_egl_images()
 
     for texture in self._textures.values():
       rl.unload_texture(texture)
@@ -875,9 +907,11 @@ class GuiApplication:
         render_texture = self._render_texture
         if render_texture:
           rl.begin_texture_mode(render_texture)
+          self.render_framebuffer = render_texture.id
           rl.clear_background(rl.BLACK)
         else:
           rl.begin_drawing()
+          self.render_framebuffer = self._read_framebuffer()
           rl.clear_background(rl.BLACK)
 
         if self._scale != 1.0:

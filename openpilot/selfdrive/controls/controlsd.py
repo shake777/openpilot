@@ -36,6 +36,7 @@ from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose
 from openpilot.selfdrive.carrot.carrot_controls import CarrotControls
 from openpilot.selfdrive.carrot.carrot_man_input import get_carrot_man
 from openpilot.selfdrive.monitoring.dm_alerts import driver_monitoring_hud_alert
+from openpilot.selfdrive.carrot.bluetooth.physical import HoldReader
 
 State = log.SelfdriveState.OpenpilotState
 LaneChangeState = log.LaneChangeState
@@ -61,6 +62,7 @@ class Controls:
     cloudlog.info("controlsd got CarParams")
 
     self.CI = interfaces[self.CP.carFingerprint](self.CP)
+    self.physical_blinker_hold = HoldReader(self.CP.carFingerprint, self.params)
 
     self.sm = messaging.SubMaster(['liveDelay', 'liveParameters', 'liveTorqueParameters', 'modelV2', 'selfdriveState',
                                    'liveCalibration', 'livePose', 'longitudinalPlan', 'carState', 'carOutput',
@@ -191,10 +193,11 @@ class Controls:
     lat_plan = self.sm['lateralPlan']
     curve_speed_abs = abs(self.sm['carrotMan'].vTurnSpeed)
     self.lanefull_mode_enabled = (lat_plan.useLaneLines and curve_speed_abs > self.params.get_int("UseLaneLineCurveSpeed"))
-    lat_smooth_seconds = self.params.get_float("LatSmoothSec") * 0.01
-    steer_actuator_delay = self.params.get_float("SteerActuatorDelay") * 0.01
-    if steer_actuator_delay == 0.0:
-      steer_actuator_delay = self.sm['liveDelay'].lateralDelay 
+    if CC.latActive and len(lat_plan.curvatures) > 0 and (lat_plan.useLaneLines if self.is_vw_meb else self.lanefull_mode_enabled):
+      lat_smooth_seconds = self.params.get_float("LatSmoothSec") * 0.01
+      steer_actuator_delay = self.params.get_float("SteerActuatorDelay") * 0.01
+      if steer_actuator_delay == 0.0:
+        steer_actuator_delay = self.sm['liveDelay'].lateralDelay
     
     def smooth_value(val, prev_val, tau):
       alpha = 1 - np.exp(-DT_CTRL / tau) if tau > 0 else 1
@@ -304,6 +307,7 @@ class Controls:
       setSpeed = speeds[-1] / vCluRatio
 
     hudControl = CC.hudControl
+    hudControl.physicalBlinkerHold = self.physical_blinker_hold.read(CS.canValid)
 
     hudControl.activeCarrot = self.sm['carrotMan'].activeCarrot
     hudControl.atcDistance = self.sm['carrotMan'].xDistToTurn
