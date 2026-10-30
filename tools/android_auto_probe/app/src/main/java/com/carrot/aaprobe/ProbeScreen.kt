@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import androidx.car.app.CarContext
 import androidx.car.app.CarToast
 import androidx.car.app.Screen
@@ -54,6 +55,11 @@ class ProbeScreen(carContext: CarContext) : Screen(carContext), DefaultLifecycle
   private val sensors = SensorProbe(carContext) { renderer.requestRender() }
   private val maneuverIcon = CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_maneuver)).build()
 
+  // The regular navigation app already sends TBT over Android Auto. Starting this fake route makes
+  // the host stop that app's guidance, so it needs a second press within CONFIRM_WINDOW_MS.
+  private val confirmWindowMs = 3000L
+  private var confirmUntil = 0L
+
   private var navigating = false
   private var stepIndex = 0
   private var distanceM = stepStartM
@@ -82,7 +88,15 @@ class ProbeScreen(carContext: CarContext) : Screen(carContext), DefaultLifecycle
     requestPermissionsThenStart()
   }
 
+  // Lifecycle is logged so the log shows whether sensor updates keep arriving while the
+  // regular navigation app is in front (sensors stay subscribed until onDestroy).
+  override fun onStart(owner: LifecycleOwner) = ProbeLog.log("lifecycle", mapOf("state" to "start"))
+  override fun onResume(owner: LifecycleOwner) = ProbeLog.log("lifecycle", mapOf("state" to "resume"))
+  override fun onPause(owner: LifecycleOwner) = ProbeLog.log("lifecycle", mapOf("state" to "pause"))
+  override fun onStop(owner: LifecycleOwner) = ProbeLog.log("lifecycle", mapOf("state" to "stop"))
+
   override fun onDestroy(owner: LifecycleOwner) {
+    ProbeLog.log("lifecycle", mapOf("state" to "destroy"))
     stopNavigation(notifyHost = true)
     sensors.stop()
     handler.removeCallbacksAndMessages(null)
@@ -91,8 +105,12 @@ class ProbeScreen(carContext: CarContext) : Screen(carContext), DefaultLifecycle
   override fun onGetTemplate(): Template {
     val strip = ActionStrip.Builder()
       .addAction(Action.Builder()
-        .setTitle(if (navigating) "TBT 중지" else "TBT 시작")
-        .setOnClickListener { if (navigating) stopNavigation(notifyHost = true) else startNavigation() }
+        .setTitle(when {
+          navigating -> "TBT 중지"
+          confirmPending() -> "한번 더: 시작"
+          else -> "TBT 시험"
+        })
+        .setOnClickListener { onTbtButton() }
         .build())
       .addAction(Action.Builder()
         .setTitle("다음 안내")
@@ -137,6 +155,24 @@ class ProbeScreen(carContext: CarContext) : Screen(carContext), DefaultLifecycle
     } catch (e: Exception) {
       ProbeLog.log("permissions_result", mapOf("error" to "${e.javaClass.simpleName}: ${e.message}"))
       sensors.start()
+    }
+  }
+
+  private fun confirmPending(): Boolean = SystemClock.elapsedRealtime() < confirmUntil
+
+  private fun onTbtButton() {
+    when {
+      navigating -> stopNavigation(notifyHost = true)
+      confirmPending() -> {
+        confirmUntil = 0L
+        startNavigation()
+      }
+      else -> {
+        confirmUntil = SystemClock.elapsedRealtime() + confirmWindowMs
+        CarToast.makeText(carContext, "실행 중인 내비 안내가 중단됩니다. 3초 안에 한 번 더 누르세요", CarToast.LENGTH_LONG).show()
+        handler.postDelayed({ invalidate() }, confirmWindowMs + 100)
+        invalidate()
+      }
     }
   }
 
@@ -225,7 +261,7 @@ class ProbeScreen(carContext: CarContext) : Screen(carContext), DefaultLifecycle
       val s = steps[stepIndex]
       "TBT ON  #$stepIndex ${s.cue} ${distanceM.toInt()}m  (type ${s.type})"
     } else {
-      "TBT OFF  (TBT 시작 버튼으로 시험)"
+      "TBT OFF  데이터 수집 중 (일반 내비로 돌아가도 계속 수집)"
     }
     lastTripError?.let { header += "TBT 오류: $it" }
     return header + sensors.summaryLines()
