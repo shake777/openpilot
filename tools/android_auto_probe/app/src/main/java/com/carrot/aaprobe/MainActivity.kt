@@ -2,9 +2,15 @@ package com.carrot.aaprobe
 
 import android.Manifest
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
 import android.text.InputType
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
@@ -13,10 +19,15 @@ import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Spinner
+import android.widget.ArrayAdapter
 import android.widget.TextView
 import android.widget.Toast
 
-/** Phone-side settings: permissions, optional UDP log target, and the latest log lines. */
+/**
+ * Phone-side settings: permissions, optional UDP log target, the receive-only M-CAN recorder,
+ * TMAP/Naver guidance-notification capture, and the latest log lines.
+ */
 class MainActivity : Activity() {
   private val permissions = arrayOf(
     Manifest.permission.ACCESS_FINE_LOCATION,
@@ -27,7 +38,15 @@ class MainActivity : Activity() {
   )
 
   private lateinit var status: TextView
+  private lateinit var mcanStatus: TextView
   private lateinit var logView: TextView
+  private val ui = Handler(Looper.getMainLooper())
+  private val ticker = object : Runnable {
+    override fun run() {
+      refreshMcan()
+      ui.postDelayed(this, 1000)
+    }
+  }
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -40,7 +59,7 @@ class MainActivity : Activity() {
       setPadding(pad, pad, pad, pad)
     }
     root.addView(TextView(this).apply {
-      text = "AA Probe\n안드로이드 오토에서 'AA Probe'를 실행하면 헤드유닛 데이터 수집과 가짜 TBT 시험을 합니다."
+      text = "AA Probe\n① 미러링 연결: M-CAN 수신 기록 + TMAP/네이버 안내 알림 기록\n② 안드로이드 오토 연결: 헤드유닛 데이터 수집과 가짜 TBT 시험"
       textSize = 16f
     })
 
@@ -49,8 +68,63 @@ class MainActivity : Activity() {
 
     root.addView(Button(this).apply {
       text = "권한 요청"
-      setOnClickListener { requestPermissions(permissions, 1) }
+      setOnClickListener {
+        val all = if (Build.VERSION.SDK_INT >= 33) permissions + Manifest.permission.POST_NOTIFICATIONS else permissions
+        requestPermissions(all, 1)
+      }
     })
+    root.addView(Button(this).apply {
+      text = "알림 접근 허용 (TMAP/네이버 안내 기록)"
+      setOnClickListener { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
+    })
+
+    root.addView(TextView(this).apply {
+      text = "\nM-CAN 수신 (SLCAN-over-TCP 어댑터, 예: WiCAN slcan 모드)\n차량에 아무것도 보내지 않습니다(listen-only)."
+      textSize = 15f
+    })
+    val mcanHost = EditText(this).apply {
+      hint = "어댑터 IP (WiCAN 기본 192.168.80.1)"
+      setText(prefs.getString(McanService.PREF_HOST, McanService.DEFAULT_HOST))
+      inputType = InputType.TYPE_CLASS_TEXT
+    }
+    val mcanPort = EditText(this).apply {
+      hint = "포트 (WiCAN 기본 3333)"
+      setText(prefs.getInt(McanService.PREF_PORT, McanService.DEFAULT_PORT).toString())
+      inputType = InputType.TYPE_CLASS_NUMBER
+    }
+    val rateLabels = listOf("자동 탐색") + McanLink.BITRATES.keys.map { "${it / 1000} kbps" }
+    val rateValues = listOf(0) + McanLink.BITRATES.keys.toList()
+    val mcanRate = Spinner(this).apply {
+      adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, rateLabels)
+      setSelection(rateValues.indexOf(prefs.getInt(McanService.PREF_BITRATE, 0)).coerceAtLeast(0))
+    }
+    val mcanSilent = CheckBox(this).apply {
+      text = "어댑터 무음(silent) 설정됨 — L 명령 미지원 어댑터일 때만"
+      isChecked = prefs.getBoolean(McanService.PREF_SILENT, false)
+    }
+    root.addView(mcanHost, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+    root.addView(mcanPort, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+    root.addView(mcanRate)
+    root.addView(mcanSilent)
+    root.addView(Button(this).apply {
+      text = "M-CAN 기록 시작/중지"
+      setOnClickListener {
+        if (McanService.link?.isRunning() == true) {
+          McanService.stop(this@MainActivity)
+        } else {
+          prefs.edit()
+            .putString(McanService.PREF_HOST, mcanHost.text.toString().trim())
+            .putInt(McanService.PREF_PORT, mcanPort.text.toString().toIntOrNull() ?: McanService.DEFAULT_PORT)
+            .putInt(McanService.PREF_BITRATE, rateValues[mcanRate.selectedItemPosition])
+            .putBoolean(McanService.PREF_SILENT, mcanSilent.isChecked)
+            .apply()
+          McanService.start(this@MainActivity)
+        }
+        ui.postDelayed({ refreshMcan() }, 300)
+      }
+    })
+    mcanStatus = TextView(this).apply { setPadding(0, pad / 2, 0, pad) }
+    root.addView(mcanStatus)
 
     val udpEnabled = CheckBox(this).apply {
       text = "로그를 UDP로도 전송"
@@ -100,6 +174,29 @@ class MainActivity : Activity() {
   override fun onResume() {
     super.onResume()
     refresh()
+    ui.post(ticker)
+  }
+
+  override fun onPause() {
+    super.onPause()
+    ui.removeCallbacks(ticker)
+  }
+
+  private fun notificationAccess(): Boolean {
+    val enabled = Settings.Secure.getString(contentResolver, "enabled_notification_listeners") ?: return false
+    val me = ComponentName(this, NavNotificationListener::class.java).flattenToString()
+    return enabled.split(':').any { it == me }
+  }
+
+  private fun refreshMcan() {
+    val l = McanService.link
+    val counts = l?.countsSnapshot().orEmpty()
+    val watched = McanLink.WATCH.entries.joinToString("  ") { (id, _) -> "%03X:%d".format(id, counts[id] ?: 0) }
+    mcanStatus.text = buildString {
+      append("상태: ${McanService.lastStatus}\n")
+      if (l != null) append("프레임 ${l.totalFrames}, ID ${counts.size}개\n$watched\n파일: ${l.dumpFile?.absolutePath ?: "-"}\n")
+      append("알림 접근: ${if (notificationAccess()) "허용됨" else "꺼짐"}  마지막 안내: ${NavNotificationListener.lastSummary.ifBlank { "-" }}")
+    }
   }
 
   override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {

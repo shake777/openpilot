@@ -14,6 +14,12 @@
   <uses-permission android:name="androidx.car.app.NAVIGATION_TEMPLATES" />
   <uses-permission android:name="androidx.car.app.ACCESS_SURFACE" />
 
+  <!-- Receive-only M-CAN recorder (SLCAN over TCP) running while the screen is mirrored -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
   <application
     android:allowBackup="false"
     android:icon="@drawable/ic_launcher"
@@ -47,6 +53,21 @@
       <intent-filter>
         <action android:name="androidx.car.app.CarAppService" />
         <category android:name="androidx.car.app.category.NAVIGATION" />
+      </intent-filter>
+    </service>
+
+    <service
+      android:name=".McanService"
+      android:exported="false"
+      android:foregroundServiceType="dataSync" />
+
+    <service
+      android:name=".NavNotificationListener"
+      android:exported="true"
+      android:label="AA Probe 내비 안내 기록"
+      android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+      <intent-filter>
+        <action android:name="android.service.notification.NotificationListenerService" />
       </intent-filter>
     </service>
   </application>
