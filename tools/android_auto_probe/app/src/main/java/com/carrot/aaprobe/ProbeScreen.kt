@@ -30,10 +30,13 @@ import androidx.lifecycle.LifecycleOwner
 import java.time.ZonedDateTime
 
 /**
- * One screen that (1) shows/logs head-unit hardware data and (2) runs a fake turn-by-turn
- * route through NavigationManager.updateTrip so the cluster/HUD can be watched for arrows.
+ * One screen that (1) shows/logs head-unit hardware data, (2) runs a fake turn-by-turn route, and
+ * (3) relays live TMAP/Naver guidance from the phone-local Carrot Navi v2 bridge, both through
+ * NavigationManager.updateTrip so the cluster/HUD can be watched for arrows.
  */
 class ProbeScreen(carContext: CarContext) : Screen(carContext), DefaultLifecycleObserver {
+  private enum class Mode { NONE, FAKE, RELAY }
+
   private data class TestStep(val type: Int, val cue: String, val road: String)
 
   private val steps = listOf(
@@ -48,6 +51,10 @@ class ProbeScreen(carContext: CarContext) : Screen(carContext), DefaultLifecycle
 
   private val stepStartM = 500.0
   private val stepRateMps = 25.0  // 20 s per step
+  /** Relay keeps the trip alive this long after guidance stops, then ends navigation. */
+  private val relayStaleMs = 10_000L
+  /** Upper bound on updateTrip calls while relaying (the host throttles further). */
+  private val relayMinIntervalMs = 500L
 
   private val handler = Handler(Looper.getMainLooper())
   private val navigationManager = carContext.getCarService(NavigationManager::class.java)
@@ -55,21 +62,34 @@ class ProbeScreen(carContext: CarContext) : Screen(carContext), DefaultLifecycle
   private val sensors = SensorProbe(carContext) { renderer.requestRender() }
   private val maneuverIcon = CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_maneuver)).build()
 
-  // The regular navigation app already sends TBT over Android Auto. Starting this fake route makes
-  // the host stop that app's guidance, so it needs a second press within CONFIRM_WINDOW_MS.
+  // The regular navigation app already sends TBT over Android Auto. Starting the fake route or the
+  // relay makes the host stop that app's guidance, so it needs a second press within the window.
   private val confirmWindowMs = 3000L
   private var confirmUntil = 0L
+  private var confirmFor = Mode.NONE
 
-  private var navigating = false
+  private var mode = Mode.NONE
+  private var relayArmed = false
   private var stepIndex = 0
   private var distanceM = stepStartM
   private var lastTripError: String? = null
+  private var lastRelayPush = 0L
+  private var lastRelaySig = ""
 
   private val tick = object : Runnable {
     override fun run() {
-      if (!navigating) return
+      if (mode != Mode.FAKE) return
       distanceM -= stepRateMps
       if (distanceM <= 0.0) advanceStep() else pushTrip()
+      handler.postDelayed(this, 1000)
+    }
+  }
+
+  private val bridgeListener: (NaviBridge.State) -> Unit = { handler.post { onBridge(it) } }
+  private val relayWatch = object : Runnable {
+    override fun run() {
+      if (!relayArmed) return
+      onBridge(NaviBridge.state)
       handler.postDelayed(this, 1000)
     }
   }
@@ -81,10 +101,12 @@ class ProbeScreen(carContext: CarContext) : Screen(carContext), DefaultLifecycle
   override fun onCreate(owner: LifecycleOwner) {
     navigationManager.setNavigationManagerCallback(object : NavigationManagerCallback {
       override fun onStopNavigation() {
-        ProbeLog.log("nav_host_stop")
+        ProbeLog.log("nav_host_stop", mapOf("mode" to mode.name))
+        relayArmed = false
         stopNavigation(notifyHost = false)
       }
     })
+    NaviBridge.addListener(bridgeListener)
     requestPermissionsThenStart()
   }
 
@@ -97,6 +119,8 @@ class ProbeScreen(carContext: CarContext) : Screen(carContext), DefaultLifecycle
 
   override fun onDestroy(owner: LifecycleOwner) {
     ProbeLog.log("lifecycle", mapOf("state" to "destroy"))
+    NaviBridge.removeListener(bridgeListener)
+    relayArmed = false
     stopNavigation(notifyHost = true)
     sensors.stop()
     handler.removeCallbacksAndMessages(null)
@@ -106,15 +130,23 @@ class ProbeScreen(carContext: CarContext) : Screen(carContext), DefaultLifecycle
     val strip = ActionStrip.Builder()
       .addAction(Action.Builder()
         .setTitle(when {
-          navigating -> "TBT 중지"
-          confirmPending() -> "한번 더: 시작"
+          relayArmed -> "중계 중지"
+          confirmPending(Mode.RELAY) -> "한번 더: 중계"
+          else -> "내비 중계"
+        })
+        .setOnClickListener { onRelayButton() }
+        .build())
+      .addAction(Action.Builder()
+        .setTitle(when {
+          mode == Mode.FAKE -> "TBT 중지"
+          confirmPending(Mode.FAKE) -> "한번 더: 시작"
           else -> "TBT 시험"
         })
         .setOnClickListener { onTbtButton() }
         .build())
       .addAction(Action.Builder()
         .setTitle("다음 안내")
-        .setOnClickListener { if (navigating) advanceStep() }
+        .setOnClickListener { if (mode == Mode.FAKE) advanceStep() }
         .build())
       .addAction(Action.Builder()
         .setTitle("센서 재시작")
@@ -123,11 +155,27 @@ class ProbeScreen(carContext: CarContext) : Screen(carContext), DefaultLifecycle
       .build()
 
     val builder = NavigationTemplate.Builder().setActionStrip(strip)
-    if (navigating) {
-      builder.setNavigationInfo(RoutingInfo.Builder()
-        .setCurrentStep(currentStep(), Distance.create(distanceM, Distance.UNIT_METERS))
-        .build())
-      builder.setDestinationTravelEstimate(destinationEstimate())
+    when (mode) {
+      Mode.FAKE -> {
+        builder.setNavigationInfo(RoutingInfo.Builder()
+          .setCurrentStep(fakeStep(), Distance.create(distanceM, Distance.UNIT_METERS))
+          .build())
+        builder.setDestinationTravelEstimate(estimate(remainingTotalM(), stepRateMps))
+      }
+      Mode.RELAY -> {
+        val s = NaviBridge.state
+        val cur = s.current
+        if (cur != null) {
+          val info = RoutingInfo.Builder()
+            .setCurrentStep(relayStep(cur), Distance.create(cur.distanceM.toDouble(), Distance.UNIT_METERS))
+          s.next?.let { info.setNextStep(relayStep(it)) }
+          builder.setNavigationInfo(info.build())
+          relayDestination(s)?.let { builder.setDestinationTravelEstimate(it) }
+        } else {
+          builder.setNavigationInfo(RoutingInfo.Builder().setLoading(true).build())
+        }
+      }
+      Mode.NONE -> {}
     }
     return builder.build()
   }
@@ -158,45 +206,110 @@ class ProbeScreen(carContext: CarContext) : Screen(carContext), DefaultLifecycle
     }
   }
 
-  private fun confirmPending(): Boolean = SystemClock.elapsedRealtime() < confirmUntil
+  private fun confirmPending(m: Mode): Boolean = confirmFor == m && SystemClock.elapsedRealtime() < confirmUntil
+
+  private fun askConfirm(m: Mode, what: String) {
+    confirmFor = m
+    confirmUntil = SystemClock.elapsedRealtime() + confirmWindowMs
+    CarToast.makeText(carContext, "실행 중인 내비 안내가 중단됩니다. 3초 안에 한 번 더 누르면 $what", CarToast.LENGTH_LONG).show()
+    handler.postDelayed({ invalidate() }, confirmWindowMs + 100)
+    invalidate()
+  }
 
   private fun onTbtButton() {
     when {
-      navigating -> stopNavigation(notifyHost = true)
-      confirmPending() -> {
+      mode == Mode.FAKE -> stopNavigation(notifyHost = true)
+      confirmPending(Mode.FAKE) -> {
         confirmUntil = 0L
-        startNavigation()
+        relayArmed = false
+        if (mode == Mode.RELAY) stopNavigation(notifyHost = true)
+        startFake()
       }
-      else -> {
-        confirmUntil = SystemClock.elapsedRealtime() + confirmWindowMs
-        CarToast.makeText(carContext, "실행 중인 내비 안내가 중단됩니다. 3초 안에 한 번 더 누르세요", CarToast.LENGTH_LONG).show()
-        handler.postDelayed({ invalidate() }, confirmWindowMs + 100)
-        invalidate()
-      }
+      else -> askConfirm(Mode.FAKE, "가짜 경로를 시작합니다")
     }
   }
 
-  private fun startNavigation() {
+  private fun onRelayButton() {
+    when {
+      relayArmed -> {
+        relayArmed = false
+        ProbeLog.log("relay", mapOf("state" to "off"))
+        if (mode == Mode.RELAY) stopNavigation(notifyHost = true)
+        invalidate()
+      }
+      confirmPending(Mode.RELAY) -> {
+        confirmUntil = 0L
+        if (mode == Mode.FAKE) stopNavigation(notifyHost = true)
+        ensureBridge()
+        relayArmed = true
+        ProbeLog.log("relay", mapOf("state" to "armed"))
+        handler.removeCallbacks(relayWatch)
+        handler.post(relayWatch)
+        invalidate()
+      }
+      else -> askConfirm(Mode.RELAY, "TMAP/네이버 안내를 중계합니다")
+    }
+  }
+
+  private fun ensureBridge() {
+    if (NaviBridgeService.bridge?.isRunning() == true) return
     try {
-      navigationManager.navigationStarted()
+      NaviBridgeService.start(carContext)
     } catch (e: Exception) {
-      lastTripError = "${e.javaClass.simpleName}: ${e.message}"
-      ProbeLog.log("nav_start", mapOf("ok" to false, "error" to lastTripError))
-      CarToast.makeText(carContext, "내비 시작 실패", CarToast.LENGTH_LONG).show()
+      ProbeLog.log("relay", mapOf("state" to "bridge_start_failed", "error" to "${e.javaClass.simpleName}: ${e.message}"))
+      CarToast.makeText(carContext, "휴대폰의 AA Probe에서 '내비 중계 시작'을 먼저 눌러 주세요", CarToast.LENGTH_LONG).show()
+    }
+  }
+
+  /** Start relaying when fresh guidance exists; end it once guidance has been gone for a while. */
+  private fun onBridge(s: NaviBridge.State) {
+    if (!relayArmed) return
+    val fresh = s.current != null && s.guideAgeMs() < relayStaleMs
+    if (mode != Mode.RELAY) {
+      if (!fresh) return
+      if (!beginNavigation()) return
+      mode = Mode.RELAY
+      lastRelaySig = ""
+      ProbeLog.log("relay", mapOf("state" to "started", "sender" to s.sender))
+    } else if (!fresh) {
+      ProbeLog.log("relay", mapOf("state" to "guidance_gone"))
+      stopNavigation(notifyHost = true)
       return
     }
-    navigating = true
+    val cur = s.current ?: return
+    val sig = "${cur.turnType}/${cur.distanceM}/${s.next?.turnType}/${s.remainM}"
+    val now = SystemClock.elapsedRealtime()
+    if (sig == lastRelaySig && now - lastRelayPush < 5000) return
+    if (now - lastRelayPush < relayMinIntervalMs) return
+    lastRelaySig = sig
+    lastRelayPush = now
+    pushRelayTrip(s, cur)
+  }
+
+  private fun beginNavigation(): Boolean = try {
+    navigationManager.navigationStarted()
+    ProbeLog.log("nav_start", mapOf("ok" to true))
+    true
+  } catch (e: Exception) {
+    lastTripError = "${e.javaClass.simpleName}: ${e.message}"
+    ProbeLog.log("nav_start", mapOf("ok" to false, "error" to lastTripError))
+    CarToast.makeText(carContext, "내비 시작 실패", CarToast.LENGTH_LONG).show()
+    false
+  }
+
+  private fun startFake() {
+    if (!beginNavigation()) return
+    mode = Mode.FAKE
     stepIndex = 0
     distanceM = stepStartM
-    ProbeLog.log("nav_start", mapOf("ok" to true))
     pushTrip()
     handler.removeCallbacks(tick)
     handler.postDelayed(tick, 1000)
   }
 
   private fun stopNavigation(notifyHost: Boolean) {
-    if (!navigating) return
-    navigating = false
+    if (mode == Mode.NONE) return
+    mode = Mode.NONE
     handler.removeCallbacks(tick)
     if (notifyHost) {
       try {
@@ -216,7 +329,7 @@ class ProbeScreen(carContext: CarContext) : Screen(carContext), DefaultLifecycle
     pushTrip()
   }
 
-  private fun currentStep(): Step {
+  private fun fakeStep(): Step {
     val s = steps[stepIndex]
     return Step.Builder(s.cue)
       .setManeuver(Maneuver.Builder(s.type).setIcon(maneuverIcon).build())
@@ -224,32 +337,65 @@ class ProbeScreen(carContext: CarContext) : Screen(carContext), DefaultLifecycle
       .build()
   }
 
+  private fun relayStep(g: NaviBridge.Guide): Step {
+    val turn = TurnMap.of(g.turnType)
+    val maneuver = Maneuver.Builder(turn.type).setIcon(maneuverIcon)
+    if (turn.exitAngle > 0) maneuver.setRoundaboutExitAngle(turn.exitAngle)
+    val cue = listOf(g.mainText, g.nearDirection, g.roadName).firstOrNull { it.isNotBlank() } ?: turn.label
+    val step = Step.Builder(cue).setManeuver(maneuver.build())
+    if (g.roadName.isNotBlank()) step.setRoad(g.roadName)
+    return step.build()
+  }
+
   private fun remainingTotalM(): Double = distanceM + (steps.size - 1 - stepIndex) * stepStartM
 
-  private fun estimate(meters: Double): TravelEstimate {
-    val seconds = (meters / stepRateMps).toLong()
-    return TravelEstimate.Builder(
+  private fun estimate(meters: Double, mps: Double, seconds: Long = (meters / mps).toLong()): TravelEstimate =
+    TravelEstimate.Builder(
       Distance.create(meters, Distance.UNIT_METERS),
       DateTimeWithZone.create(ZonedDateTime.now().plusSeconds(seconds)),
     ).setRemainingTimeSeconds(seconds).build()
-  }
 
-  private fun destinationEstimate(): TravelEstimate = estimate(remainingTotalM())
+  private fun guideEstimate(g: NaviBridge.Guide): TravelEstimate =
+    estimate(g.distanceM.toDouble(), 1.0, g.timeSec.toLong().coerceAtLeast(0))
+
+  private fun relayDestination(s: NaviBridge.State): TravelEstimate? {
+    val m = s.remainM ?: return null
+    return estimate(m.toDouble(), 1.0, (s.remainSec ?: 0).toLong().coerceAtLeast(0))
+  }
 
   private fun pushTrip() {
     val s = steps[stepIndex]
     val trip = Trip.Builder()
-      .addStep(currentStep(), estimate(distanceM))
-      .addDestination(Destination.Builder().setName("AA Probe 시험").setAddress("가짜 경로").build(), destinationEstimate())
+      .addStep(fakeStep(), estimate(distanceM, stepRateMps))
+      .addDestination(Destination.Builder().setName("AA Probe 시험").setAddress("가짜 경로").build(),
+        estimate(remainingTotalM(), stepRateMps))
       .setCurrentRoad("AA Probe 시험로")
       .build()
+    sendTrip(trip, mapOf("mode" to "fake", "step" to stepIndex, "maneuver_type" to s.type, "cue" to s.cue, "distance_m" to distanceM))
+  }
+
+  private fun pushRelayTrip(s: NaviBridge.State, cur: NaviBridge.Guide) {
+    val trip = Trip.Builder().addStep(relayStep(cur), guideEstimate(cur))
+    s.next?.let { trip.addStep(relayStep(it), guideEstimate(it)) }
+    relayDestination(s)?.let {
+      trip.addDestination(Destination.Builder().setName("목적지").build(), it)
+    }
+    if (cur.roadName.isNotBlank()) trip.setCurrentRoad(cur.roadName)
+    val turn = TurnMap.of(cur.turnType)
+    sendTrip(trip.build(), mapOf(
+      "mode" to "relay", "turn_type" to cur.turnType, "maneuver_type" to turn.type, "cue" to turn.label,
+      "distance_m" to cur.distanceM, "next_turn_type" to s.next?.turnType, "remain_m" to s.remainM,
+    ))
+  }
+
+  private fun sendTrip(trip: Trip, fields: Map<String, Any?>) {
     try {
       navigationManager.updateTrip(trip)
       lastTripError = null
-      ProbeLog.log("tbt", mapOf("step" to stepIndex, "maneuver_type" to s.type, "cue" to s.cue, "distance_m" to distanceM))
+      ProbeLog.log("tbt", fields)
     } catch (e: Exception) {
       lastTripError = "${e.javaClass.simpleName}: ${e.message}"
-      ProbeLog.log("tbt", mapOf("step" to stepIndex, "ok" to false, "error" to lastTripError))
+      ProbeLog.log("tbt", fields + mapOf("ok" to false, "error" to lastTripError))
     }
     invalidate()
     renderer.requestRender()
@@ -257,11 +403,17 @@ class ProbeScreen(carContext: CarContext) : Screen(carContext), DefaultLifecycle
 
   private fun overlayLines(): List<String> {
     val header = mutableListOf("AA Probe  api=${carContext.carAppApiLevel}")
-    header += if (navigating) {
-      val s = steps[stepIndex]
-      "TBT ON  #$stepIndex ${s.cue} ${distanceM.toInt()}m  (type ${s.type})"
-    } else {
-      "TBT OFF  데이터 수집 중 (일반 내비로 돌아가도 계속 수집)"
+    val b = NaviBridge.state
+    header += "중계 ${if (relayArmed) "켜짐" else "꺼짐"}  수신 ${NaviBridgeService.lastStatus}  연결 ${b.connections}"
+    header += when (mode) {
+      Mode.FAKE -> {
+        val s = steps[stepIndex]
+        "TBT 시험  #$stepIndex ${s.cue} ${distanceM.toInt()}m  (type ${s.type})"
+      }
+      Mode.RELAY -> b.current?.let {
+        "중계 중  ${TurnMap.of(it.turnType).label} ${it.distanceM}m  (code ${it.turnType})  ${it.roadName}"
+      } ?: "중계 중  안내 없음"
+      Mode.NONE -> if (relayArmed) "중계 대기: TMAP/네이버에서 안내를 시작하세요" else "TBT OFF  데이터 수집 중"
     }
     lastTripError?.let { header += "TBT 오류: $it" }
     return header + sensors.summaryLines()

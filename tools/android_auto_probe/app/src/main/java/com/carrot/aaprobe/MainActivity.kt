@@ -39,6 +39,7 @@ class MainActivity : Activity() {
 
   private lateinit var status: TextView
   private lateinit var mcanStatus: TextView
+  private lateinit var bridgeStatus: TextView
   private lateinit var logView: TextView
   private val ui = Handler(Looper.getMainLooper())
   private val ticker = object : Runnable {
@@ -59,7 +60,7 @@ class MainActivity : Activity() {
       setPadding(pad, pad, pad, pad)
     }
     root.addView(TextView(this).apply {
-      text = "AA Probe\n① 미러링 연결: M-CAN 수신 기록 + TMAP/네이버 안내 알림 기록\n② 안드로이드 오토 연결: 헤드유닛 데이터 수집과 가짜 TBT 시험"
+      text = "AA Probe\n① 안드로이드 오토: TMAP·네이버 안내 중계, 헤드유닛 데이터 수집, 가짜 TBT 시험\n② 미러링 연결: M-CAN 수신 기록 + TMAP·네이버 안내 알림 기록"
       textSize = 16f
     })
 
@@ -125,6 +126,41 @@ class MainActivity : Activity() {
     })
     mcanStatus = TextView(this).apply { setPadding(0, pad / 2, 0, pad) }
     root.addView(mcanStatus)
+
+    root.addView(TextView(this).apply {
+      text = "\n내비 중계 (TMAP·네이버 → 안드로이드 오토 → 계기판/HUD)\nTMAP·네이버가 휴대폰의 AA Probe로 연결하고, AA Probe가 같은 데이터를 C4로 그대로 넘깁니다."
+      textSize = 15f
+    })
+    val modeLabels = listOf("C4 자동(Wi-Fi 게이트웨이)", "C4 주소 직접 입력", "C4 없음(단독)")
+    val modeValues = listOf("auto", "manual", "none")
+    val upstreamMode = Spinner(this).apply {
+      adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, modeLabels)
+      setSelection(modeValues.indexOf(prefs.getString(NaviBridgeService.PREF_UPSTREAM_MODE, "auto")).coerceAtLeast(0))
+    }
+    val upstreamHost = EditText(this).apply {
+      hint = "C4 IP (직접 입력일 때)"
+      setText(prefs.getString(NaviBridgeService.PREF_UPSTREAM_HOST, ""))
+      inputType = InputType.TYPE_CLASS_TEXT
+    }
+    root.addView(upstreamMode)
+    root.addView(upstreamHost, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+    root.addView(Button(this).apply {
+      text = "내비 중계 시작/중지"
+      setOnClickListener {
+        if (NaviBridgeService.bridge?.isRunning() == true) {
+          NaviBridgeService.stop(this@MainActivity)
+        } else {
+          prefs.edit()
+            .putString(NaviBridgeService.PREF_UPSTREAM_MODE, modeValues[upstreamMode.selectedItemPosition])
+            .putString(NaviBridgeService.PREF_UPSTREAM_HOST, upstreamHost.text.toString().trim())
+            .apply()
+          NaviBridgeService.start(this@MainActivity)
+        }
+        ui.postDelayed({ refreshMcan() }, 300)
+      }
+    })
+    bridgeStatus = TextView(this).apply { setPadding(0, pad / 2, 0, pad) }
+    root.addView(bridgeStatus)
 
     val udpEnabled = CheckBox(this).apply {
       text = "로그를 UDP로도 전송"
@@ -196,6 +232,16 @@ class MainActivity : Activity() {
       append("상태: ${McanService.lastStatus}\n")
       if (l != null) append("프레임 ${l.totalFrames}, ID ${counts.size}개\n$watched\n파일: ${l.dumpFile?.absolutePath ?: "-"}\n")
       append("알림 접근: ${if (notificationAccess()) "허용됨" else "꺼짐"}  마지막 안내: ${NavNotificationListener.lastSummary.ifBlank { "-" }}")
+    }
+    val b = NaviBridge.state
+    val (up, upPort) = NaviBridgeService.upstream(this)
+    bridgeStatus.text = buildString {
+      append("상태: ${NaviBridgeService.lastStatus}\n")
+      append("C4: ${up?.let { "$it:$upPort" } ?: "없음(단독)"}  연결 ${b.connections}  보낸 앱 ${b.sender.ifBlank { "-" }}\n")
+      val cur = b.current
+      if (cur == null) append("현재 안내: 없음")
+      else append("현재 안내: ${TurnMap.of(cur.turnType).label} ${cur.distanceM}m (code ${cur.turnType}) ${cur.roadName}")
+      b.next?.let { append("\n다음 안내: ${TurnMap.of(it.turnType).label} ${it.distanceM}m (code ${it.turnType})") }
     }
   }
 
