@@ -105,6 +105,9 @@ def clamp_numeric(value: float, p: Optional[Dict[str, Any]]) -> float:
       value = max(value, float(mn))
     if mx is not None:
       value = min(value, float(mx))
+    nonzero_min = p.get("nonzero_min")
+    if nonzero_min is not None and 0 < value < float(nonzero_min):
+      value = float(nonzero_min)
   except Exception:
     pass
   return value
@@ -370,11 +373,7 @@ def put_typed(params: "Params", key: str, value: Any, p: Optional[Dict[str, Any]
     params.put(key, str(value))
 
 
-# Device counters are never written from the web, backups, restores or defaults: a backup restored
-# RouteCount=54 on a K7 (2026-10-03), so new routes 0x36.. sorted before older 0x44.. and the deleter
-# removed every new recording except each route's locked last segment.
-DEVICE_COUNTER_PARAMS = frozenset({"RouteCount", "BootCount", "LastUpdateRouteCount"})
-INTERNAL_SESSION_PARAMS = frozenset({"DriverMonitoringSessionDisabled", "JetsonLegacyUpdatePending"}) | DEVICE_COUNTER_PARAMS
+INTERNAL_SESSION_PARAMS = frozenset({"DriverMonitoringSessionDisabled", "JetsonLegacyUpdatePending"})
 BACKUP_EXCLUDED_PARAMS = frozenset({"DriverMonitoringEnabled"})
 
 

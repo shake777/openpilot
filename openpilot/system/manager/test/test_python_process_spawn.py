@@ -45,10 +45,7 @@ def test_deferred_and_restart_sensitive_services_select_spawn():
   calls = [n for n in ast.walk(ast.parse(path.read_text(encoding='utf-8')))
            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == 'PythonProcess']
   selected = [n.args[0].value for n in calls if any(k.arg == 'spawn' and ast.literal_eval(k.value) for k in n.keywords)]
-  # carrot-wip-custom: the C4 diagnostics uploader also starts fresh so an in-place pull cannot
-  # leave it importing a mix of preimported and updated modules. Preserve the upstream
-  # signal observer, GPS, Carrot manager and Xiaoge spawn selections too.
-  assert selected == ['signalcolord', 'qcomgpsd', 'c4_diagnostics', 'carrot_man', 'xiaoge_data']
+  assert selected == ['signalcolord', 'qcomgpsd', 'carrot_man', 'xiaoge_data']
 
 
 @pytest.mark.parametrize('legacy_fork', [False, True])

@@ -13,13 +13,14 @@ USE AT YOUR OWN RISK! Safety features, like AEB and FCW, might be affected by th
 
 import sys
 import argparse
-import json
-import re
 import time
-import uuid
-from pathlib import Path
 from typing import NamedTuple
 from subprocess import check_output, CalledProcessError
+
+from opendbc.car.carlog import carlog
+from opendbc.car.uds import UdsClient, SESSION_TYPE, DATA_IDENTIFIER_TYPE, NegativeResponseError
+from opendbc.car.structs import CarParams
+from panda.python import Panda
 
 class ConfigValues(NamedTuple):
   default_config: bytes
@@ -73,165 +74,19 @@ SUPPORTED_FW_VERSIONS = {
     tracks_enabled=b"\x00\x00\x00\x01\x00\x01"),
 }
 
-PART_NUMBER_PATTERN = re.compile(r'\b\d{5}-[A-Z0-9]{5}\b')
-VERSION_PATTERN = re.compile(r'\b\d+\.\d+\b')
-K7_EXPERIMENTAL_CONFIG = ConfigValues(
-  default_config=b"\x00\x02\x00\x00\x00",
-  tracks_enabled=b"\x00\x02\x00\x00\x01",
-)
-K7_BACKUP_PATH = Path("/data/k7-radar-0142-backup.json")
-
-
-def write_k7_candidate_and_restore(uds_client, data_id: int, candidate: bytes, original: bytes) -> bytes:
-  try:
-    uds_client.write_data_by_identifier(data_id, candidate)
-    observed = uds_client.read_data_by_identifier(data_id)
-    if observed != candidate:
-      raise ValueError(f"candidate readback mismatch: {observed.hex()}")
-    return observed
-  finally:
-    try:
-      current = uds_client.read_data_by_identifier(data_id)
-    except Exception:
-      current = None
-    if current != original:
-      uds_client.write_data_by_identifier(data_id, original)
-    restored = uds_client.read_data_by_identifier(data_id)
-    if restored != original:
-      raise ValueError(f"original configuration not restored: {restored.hex()}")
-
-
-def save_k7_security_probe_report(report: dict, output_path: Path | None = None) -> Path:
-  from tools.c4_diagnostics.startup_inventory import save_report
-  from tools.c4_diagnostics.upload import UploadError, load_config
-
-  if output_path is None:
-    try:
-      spool = Path(load_config().spool_dir)
-    except UploadError:
-      spool = Path("/data/c4-diagnostics/spool")
-    output_path = spool / f"k7-security-probe-{uuid.uuid4()}.json"
-  output_path.parent.mkdir(parents=True, exist_ok=True)
-  save_report(output_path, report)
-  return output_path
-
-
-def is_k7_experimental_firmware(fw_version: bytes) -> bool:
-  return b"YG__ SCC FHCUP" in fw_version and b"99110-F6000" in fw_version and b"1.00 1.02" in fw_version
-
-
-def save_k7_backup(fw_version: bytes, current_config: bytes, path: Path = K7_BACKUP_PATH) -> None:
-  record = {"firmware_hex": fw_version.hex(), "original_config_hex": current_config.hex()}
-  if path.exists():
-    existing = json.loads(path.read_text(encoding="utf-8"))
-    if existing != record:
-      raise ValueError(f"backup mismatch at {path}")
-    return
-  path.parent.mkdir(parents=True, exist_ok=True)
-  temp_path = path.with_suffix(path.suffix + ".tmp")
-  temp_path.write_text(json.dumps(record, sort_keys=True), encoding="utf-8")
-  temp_path.replace(path)
-
-
-def load_k7_backup(path: Path = K7_BACKUP_PATH) -> bytes:
-  record = json.loads(path.read_text(encoding="utf-8"))
-  return bytes.fromhex(record["original_config_hex"])
-
-
-def read_radar_inventory(uds_client, bus: int) -> dict:
-  from opendbc.car.uds import NegativeResponseError, MessageTimeoutError
-
-  inventory = {
-    'mode': 'inventory-only',
-    'write_performed': False,
-    'diagnostic_session_changed': False,
-    'ecu': {'request_address': '0x7d0', 'response_address': '0x7d8', 'bus': bus},
-    'f100': {'status': 'not_read'},
-    'did_0142': {'status': 'not_read'},
-    'known_activation_support': 'unknown',
-    'firmware_exact_match': None,
-    'complete': False,
-  }
-  for data_id, field in ((0xf100, 'f100'), (0x0142, 'did_0142')):
-    try:
-      data = uds_client.read_data_by_identifier(data_id)
-    except (NegativeResponseError, MessageTimeoutError) as error:
-      inventory[field] = {
-        'status': 'error', 'did': f'0x{data_id:04x}',
-        'error_type': type(error).__name__, 'message': str(error),
-      }
-      if isinstance(error, NegativeResponseError):
-        inventory[field]['nrc'] = error.error_code
-      else:
-        inventory[field]['hint'] = 'Check vehicle ignition and diagnostic bus; timeout does not establish the cause.'
-      return inventory
-    inventory[field] = {'status': 'ok', 'raw_hex': data.hex(), 'bytes': len(data)}
-    if data_id == 0xf100:
-      readable = ''.join(chr(value) if 32 <= value < 127 else '.' for value in data)
-      part_number = PART_NUMBER_PATTERN.search(readable)
-      inventory[field].update({
-        'ascii': readable,
-        'part_number': part_number.group(0) if part_number else '',
-        'version_fields': VERSION_PATTERN.findall(readable),
-      })
-      inventory['firmware_exact_match'] = data in SUPPORTED_FW_VERSIONS
-      # 기본 세션 정보만으로 실제 차량의 트랙 활성화 지원을 확정하지 않는다.
-  inventory['complete'] = True
-  return inventory
-
 if __name__ == "__main__":
-  from opendbc.car.carlog import carlog
-  from opendbc.car.uds import UdsClient, SESSION_TYPE, DATA_IDENTIFIER_TYPE, MessageTimeoutError, NegativeResponseError
-  from opendbc.car.structs import CarParams
-  from panda.python import Panda
-
   parser = argparse.ArgumentParser(description='configure radar to output points (or reset to default)')
   parser.add_argument('--default', action="store_true", default=False, help='reset to default configuration (default: false)')
   parser.add_argument('--read-only', action="store_true", default=False,
                       help='only read firmware and configuration; never write to the radar')
-  parser.add_argument('--inventory-only', action="store_true", default=False,
-                      help='read only F100 and 0142 in the default session; never change session or write')
-  parser.add_argument('--k7-experimental', action="store_true", default=False,
-                      help='explicitly test K7 99110-F6000 candidate; saves and verifies the original configuration')
-  parser.add_argument('--k7-test-write-restore', action='store_true',
-                      help='with --k7-experimental, test one candidate and restore the original in the same session')
-  parser.add_argument('--k7-session-probe', action="store_true", default=False,
-                      help='read-only probe of the standard extended diagnostic session on the exact K7 radar')
-  parser.add_argument('--k7-security-probe', action="store_true", default=False,
-                      help='request one security level 0x01 seed on the exact K7 radar; never send a key or write configuration')
-  parser.add_argument('--k7-characterize', action='store_true',
-                      help='read bounded K7 identity/configuration/DTC data; no session change, seed, key or write')
-  parser.add_argument('--compare-sessions', action='store_true',
-                      help='with --k7-characterize, compare reads in standard extended session and return to default')
-  parser.add_argument('--probe-output', type=Path, default=None, help=argparse.SUPPRESS)
-  parser.add_argument('--backup-path', default=str(K7_BACKUP_PATH), help=argparse.SUPPRESS)
   parser.add_argument('--scan-config-dids', action="store_true", default=False,
                       help='with --read-only, scan manufacturer DIDs 0x0100-0x01ff after 0x0142 fails')
   parser.add_argument('--debug', action="store_true", default=False, help='enable debug output (default: false)')
   parser.add_argument('--bus', type=int, default=0, help='can bus to use (default: 0)')
   args = parser.parse_args()
-  k7_backup_path = Path(args.backup_path)
 
-  if args.compare_sessions and not args.k7_characterize:
-    parser.error('--compare-sessions requires --k7-characterize')
-
-  if args.k7_characterize and any((args.default, args.read_only, args.inventory_only, args.k7_experimental,
-                                 args.k7_session_probe, args.k7_security_probe, args.scan_config_dids)):
-    parser.error('--k7-characterize is a standalone no-write mode')
   if args.scan_config_dids and not args.read_only:
     parser.error('--scan-config-dids requires --read-only')
-  if args.inventory_only and (args.read_only or args.scan_config_dids or args.default or args.k7_session_probe or args.k7_security_probe):
-    parser.error('--inventory-only cannot be combined with other diagnostic modes')
-  if args.k7_experimental and (args.read_only or args.inventory_only or args.scan_config_dids or args.k7_session_probe or args.k7_security_probe):
-    parser.error('--k7-experimental cannot be combined with read-only options')
-  if args.k7_test_write_restore and (not args.k7_experimental or args.default):
-    parser.error('--k7-test-write-restore requires --k7-experimental and cannot use --default')
-  if args.k7_session_probe and (args.read_only or args.scan_config_dids or args.default or args.k7_security_probe):
-    parser.error('--k7-session-probe is a standalone read-only mode')
-  if args.k7_security_probe and (args.read_only or args.scan_config_dids or args.default):
-    parser.error('--k7-security-probe is a standalone no-write mode')
-  if args.probe_output is not None and not (args.k7_security_probe or args.k7_characterize):
-    parser.error('--probe-output requires --k7-security-probe or --k7-characterize')
 
   if args.debug:
     carlog.setLevel('DEBUG')
@@ -253,197 +108,9 @@ if __name__ == "__main__":
   panda.set_safety_mode(CarParams.SafetyModel.elm327)
   uds_client = UdsClient(panda, 0x7D0, bus=args.bus)
 
-  if args.k7_characterize:
-    from tools.c4_diagnostics.characterize_radar import characterize
-
-    uds_client.response_pending_timeout = 2
-    try:
-      report, result = characterize(uds_client, bus=args.bus, compare_sessions=args.compare_sessions)
-      report_path = save_k7_security_probe_report(report, args.probe_output)
-      print(json.dumps(report, ensure_ascii=False, sort_keys=True))
-      print(f'K7 characterization saved for automatic upload: {report_path}')
-      print('No seed request, key, configuration write or DTC clear was sent.')
-    finally:
-      panda.close()
-    sys.exit(result)
-
-  if args.inventory_only:
-    print("\n[STRICT READ-ONLY RADAR INVENTORY]")
-    try:
-      inventory = read_radar_inventory(uds_client, args.bus)
-    finally:
-      panda.close()
-    print(json.dumps(inventory, ensure_ascii=False, sort_keys=True))
-    print("inventory-only mode did not change diagnostic session and made no writes")
-    sys.exit(0 if inventory['complete'] else 2)
-
-  if args.k7_session_probe or args.k7_security_probe:
-    print("\n[K7 EXTENDED SESSION PROBE]")
-    result = 5
-    session_change_attempted = False
-    session_entered = False
-    report = {"schema": "c4-k7-security-probe-v1", "created_at": time.time(), "status": "not_attempted",
-              "write_performed": False, "key_sent": False, "firmware_hex": None,
-              "default_config_hex": None, "extended_config_hex": None, "post_config_hex": None,
-              "post_restore_config_hex": None, "final_config_verified": False,
-              "security_level": "0x01", "seed_length": None, "default_session_restored": None,
-              "restore_status": "not_attempted", "errors": [], "active_session_before_seed_hex": None,
-              "session_confirmation_source": None, "diagnostic_sequence": []}
-
-    def record_error(stage, error):
-      entry = {"stage": stage, "error_type": type(error).__name__, "message": str(error)}
-      if isinstance(error, NegativeResponseError):
-        entry["nrc"] = f"0x{error.error_code:02x}"
-      report["errors"].append(entry)
-
-    def observed_request(stage, request_hex, operation):
-      entry = {"stage": stage, "request_hex": request_hex, "response_source": "uds_client_payload",
-               "started_monotonic": time.monotonic(), "status": "pending"}
-      report["diagnostic_sequence"].append(entry)
-      try:
-        value = operation()
-      except Exception as error:
-        entry.update(status="error", error_type=type(error).__name__)
-        if isinstance(error, NegativeResponseError):
-          entry["nrc"] = f"0x{error.error_code:02x}"
-        raise
-      else:
-        entry["status"] = "ok"
-        if isinstance(value, bytes):
-          entry["payload_hex"] = value.hex()
-        return value
-      finally:
-        entry["elapsed_s"] = time.monotonic() - entry["started_monotonic"]
-
-    try:
-      fw_version = observed_request("firmware_read", "22f100", lambda: uds_client.read_data_by_identifier(0xf100))
-      current_config = observed_request("default_config_read", "220142", lambda: uds_client.read_data_by_identifier(0x0142))
-      report["firmware_hex"] = fw_version.hex()
-      report["default_config_hex"] = current_config.hex()
-      print(f"firmware: {fw_version!r}")
-      print(f"default-session config: 0x{current_config.hex()}")
-      if not is_k7_experimental_firmware(fw_version):
-        print("K7 experimental firmware identity mismatch; session probe aborted")
-        report["status"] = "firmware_mismatch"
-      elif current_config != K7_EXPERIMENTAL_CONFIG.default_config:
-        print("K7 config does not match the measured factory value; session probe aborted")
-        report["status"] = "configuration_mismatch"
-      else:
-        print("[TRY STANDARD EXTENDED DIAGNOSTIC SESSION 0x03]")
-        session_change_attempted = True
-        observed_request("session_enter", "1003", lambda: uds_client.diagnostic_session_control(SESSION_TYPE.EXTENDED_DIAGNOSTIC))
-        session_entered = True
-        extended_config = observed_request("extended_config_read", "220142", lambda: uds_client.read_data_by_identifier(0x0142))
-        report["extended_config_hex"] = extended_config.hex()
-        print(f"extended-session config: 0x{extended_config.hex()}")
-        if extended_config != K7_EXPERIMENTAL_CONFIG.default_config:
-          print("K7 extended-session config differs from factory value; security probe aborted")
-          report["status"] = "extended_configuration_mismatch"
-          result = 3
-        else:
-          print("K7 extended diagnostic session 0x03 is readable; no configuration write was attempted")
-          if args.k7_security_probe:
-            session_verified = False
-            try:
-              active_session = observed_request("session_read", "22f186", lambda: uds_client.read_data_by_identifier(0xf186))
-            except (MessageTimeoutError, NegativeResponseError) as error:
-              record_error("session_read", error)
-              if isinstance(error, NegativeResponseError) and error.error_code == 0x31:
-                # This exact firmware rejected F186, but positively acknowledged 0x03 and kept 0142 readable.
-                session_verified = True
-                report["session_confirmation_source"] = "extended_response_and_0142"
-                print("K7 F186 is unsupported; continuing with positive 0x03 response and unchanged 0142")
-              else:
-                report["status"] = "session_unverified"
-                result = 4
-            else:
-              report["active_session_before_seed_hex"] = active_session.hex()
-              if active_session != b"\x03":
-                report["status"] = "session_not_active"
-                result = 4
-              else:
-                session_verified = True
-                report["session_confirmation_source"] = "f186"
-            if session_verified:
-              try:
-                observed_request("session_keepalive", "3e00", uds_client.tester_present)
-              except (MessageTimeoutError, NegativeResponseError) as error:
-                record_error("session_keepalive", error)
-                report["status"] = "session_unverified"
-                result = 4
-                print("K7 session keepalive failed; security seed was not requested")
-              else:
-                report["session_keepalive_confirmed"] = True
-                print("[REQUEST SECURITY LEVEL 0x01 SEED ONCE]")
-                try:
-                  from tools.c4_diagnostics.seed_capture import capture_seed
-                  seed = observed_request("seed", "2701", lambda: capture_seed(uds_client, report))
-                  report["status"] = "seed_accepted"
-                  report["seed_length"] = len(seed)
-                  print(f"K7 security seed request accepted ({len(seed)} bytes); no key was sent")
-                  result = 0
-                except (MessageTimeoutError, NegativeResponseError) as error:
-                  record_error("seed", error)
-                  if isinstance(error, NegativeResponseError):
-                    report["status"] = "seed_rejected"
-                    report["seed_nrc"] = f"0x{error.error_code:02x}"
-                    result = 2
-                  else:
-                    report["status"] = "seed_timeout"
-                    result = 5
-                  print(f"K7 security seed request rejected: {error}; no key was sent")
-              try:
-                verified_config = observed_request("post_seed_read", "220142", lambda: uds_client.read_data_by_identifier(0x0142))
-                report["post_config_hex"] = verified_config.hex()
-                print(f"post-probe config: 0x{verified_config.hex()}")
-                if verified_config != K7_EXPERIMENTAL_CONFIG.default_config:
-                  report["status"] = "configuration_changed"
-                  result = 3
-              except (MessageTimeoutError, NegativeResponseError) as error:
-                record_error("post_seed_read", error)
-          else:
-            result = 0
-    except (MessageTimeoutError, NegativeResponseError) as error:
-      record_error("session_enter" if session_change_attempted and not session_entered else "extended_read", error)
-      print(f"K7 extended diagnostic session probe failed: {error}")
-      print("session probe made no configuration write")
-      report["status"] = "diagnostic_error"
-      result = 5
-    finally:
-      if session_change_attempted:
-        try:
-          observed_request("session_restore", "1001", lambda: uds_client.diagnostic_session_control(0x01))
-        except (MessageTimeoutError, NegativeResponseError) as error:
-          record_error("session_restore", error)
-          report["default_session_restored"] = False
-          report["restore_status"] = "unconfirmed" if isinstance(error, MessageTimeoutError) else "failed"
-        else:
-          report["default_session_restored"] = True
-          report["restore_status"] = "confirmed"
-        try:
-          restored_config = observed_request("post_restore_read", "220142", lambda: uds_client.read_data_by_identifier(0x0142))
-          report["post_restore_config_hex"] = restored_config.hex()
-          report["final_config_verified"] = restored_config == K7_EXPERIMENTAL_CONFIG.default_config
-        except (MessageTimeoutError, NegativeResponseError) as error:
-          record_error("post_restore_read", error)
-        if report["restore_status"] != "confirmed" or not report["final_config_verified"]:
-          report["status"] = "restore_unverified"
-          print("K7 default-session return or configuration could not be verified; do not drive the vehicle")
-          result = 3
-      panda.close()
-      if args.k7_security_probe:
-        try:
-          report_path = save_k7_security_probe_report(report, args.probe_output)
-          print(f"K7 security probe saved for automatic upload: {report_path}")
-        except OSError as error:
-          print(f"K7 security probe result could not be saved: {error}")
-          result = 3
-    sys.exit(result)
-
   if not args.read_only:
     print("\n[START DIAGNOSTIC SESSION]")
-    # K7 99110-F6000 rejects Hyundai's legacy 0x07 session but exposes DID 0x0142 in standard extended session 0x03.
-    session_type : SESSION_TYPE = SESSION_TYPE.EXTENDED_DIAGNOSTIC if args.k7_experimental else 0x07
+    session_type : SESSION_TYPE = 0x07
     uds_client.diagnostic_session_control(session_type)
   else:
     print("\n[READ-ONLY DEFAULT SESSION]")
@@ -452,11 +119,7 @@ if __name__ == "__main__":
   fw_version_data_id : DATA_IDENTIFIER_TYPE = 0xf100
   fw_version = uds_client.read_data_by_identifier(fw_version_data_id)
   print(fw_version)
-  k7_experimental = args.k7_experimental and is_k7_experimental_firmware(fw_version)
-  if args.k7_experimental and not k7_experimental:
-    print("K7 experimental firmware identity mismatch! (aborted)")
-    sys.exit(1)
-  if fw_version not in SUPPORTED_FW_VERSIONS and not args.read_only and not k7_experimental:
+  if fw_version not in SUPPORTED_FW_VERSIONS and not args.read_only:
     print("radar not supported! (aborted)")
     sys.exit(1)
 
@@ -502,82 +165,19 @@ if __name__ == "__main__":
     print(f"radar configuration is {support_status}; read-only mode made no changes")
     sys.exit(0)
 
-  config_values = K7_EXPERIMENTAL_CONFIG if k7_experimental else SUPPORTED_FW_VERSIONS[fw_version]
-  if k7_experimental and not args.default and current_config != config_values.default_config:
-    print("\nK7 config does not match the measured factory value! (aborted)")
-    sys.exit(1)
-  if k7_experimental:
-    try:
-      if not args.default:
-        save_k7_backup(fw_version, current_config, k7_backup_path)
-      new_config = load_k7_backup(k7_backup_path) if args.default and k7_backup_path.exists() else config_values.default_config if args.default else config_values.tracks_enabled
-    except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
-      print(f"K7 backup validation failed: {error} (aborted)")
-      sys.exit(1)
-  else:
-    new_config = config_values.default_config if args.default else config_values.tracks_enabled
+  config_values = SUPPORTED_FW_VERSIONS[fw_version]
+  new_config = config_values.default_config if args.default else config_values.tracks_enabled
   if current_config != new_config:
-    if not args.default and current_config != config_values.default_config:
-      print("\ncurrent config does not match expected default! (aborted)")
-      sys.exit(1)
     print("[CHANGE CONFIGURATION]")
     print(f"new config:     0x{new_config.hex()}")
-    if k7_experimental:
-      try:
-        if args.k7_test_write_restore:
-          verified_config = write_k7_candidate_and_restore(uds_client, config_data_id, new_config, current_config)
-          print(f"K7 original configuration restored and verified: 0x{current_config.hex()}")
-        else:
-          uds_client.write_data_by_identifier(config_data_id, new_config)
-          verified_config = uds_client.read_data_by_identifier(config_data_id)
-        if verified_config == new_config:
-          print(f"K7 readback verified: 0x{verified_config.hex()}")
-        else:
-          print(f"K7 readback mismatch: 0x{verified_config.hex()}; restoring original configuration")
-          raise ValueError("readback mismatch")
-      except (MessageTimeoutError, NegativeResponseError, ValueError) as error:
-        print(f"K7 activation verification failed: {error}")
-        original_config = load_k7_backup(k7_backup_path)
-        try:
-          restored_config = uds_client.read_data_by_identifier(config_data_id)
-        except (MessageTimeoutError, NegativeResponseError):
-          restored_config = None
-        if restored_config != original_config:
-          print("restoring original configuration")
-          try:
-            uds_client.write_data_by_identifier(config_data_id, original_config)
-            restored_config = uds_client.read_data_by_identifier(config_data_id)
-          except (MessageTimeoutError, NegativeResponseError) as restore_error:
-            print(f"K7 automatic restore failed: {restore_error}; do not start or drive the vehicle")
-            sys.exit(3)
-        if restored_config != original_config:
-          print(f"K7 restore mismatch: 0x{restored_config.hex()}; do not start or drive the vehicle")
-          sys.exit(3)
-        print(f"K7 restore verified: 0x{restored_config.hex()}")
-        try:
-          uds_client.diagnostic_session_control(0x01)
-          print("K7 diagnostic session returned to default 0x01")
-        except (MessageTimeoutError, NegativeResponseError) as session_error:
-          print(f"K7 default-session return failed: {session_error}; fully power off the vehicle before further testing")
-          sys.exit(3)
-        sys.exit(2)
-    else:
-      uds_client.write_data_by_identifier(config_data_id, new_config)
-
-    if k7_experimental:
-      try:
-        uds_client.diagnostic_session_control(0x01)
-        print("K7 diagnostic session returned to default 0x01")
-      except (MessageTimeoutError, NegativeResponseError) as error:
-        print(f"K7 default-session return failed: {error}; fully power off the vehicle before further testing")
-        sys.exit(3)
+    uds_client.write_data_by_identifier(config_data_id, new_config)
+    if not args.default and current_config != SUPPORTED_FW_VERSIONS[fw_version].default_config:
+      print("\ncurrent config does not match expected default! (aborted)")
+      sys.exit(1)
 
     print("[DONE]")
-    if args.k7_test_write_restore:
-      print("\nCandidate write was acknowledged and original configuration restored; radar tracks were not verified")
-    else:
-      print("\nrestart your vehicle and ensure there are no faults")
-    if not args.default and not args.k7_test_write_restore:
+    print("\nrestart your vehicle and ensure there are no faults")
+    if not args.default:
       print("you can run this script again with --default to go back to the original (factory) settings")
   else:
     print("[DONE]")

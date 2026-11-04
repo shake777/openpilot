@@ -198,3 +198,4 @@ void gbm_device_destroy(struct gbm_device *device) {
   // A DRM_FD explicitly supplied by the caller is borrowed and is never closed.
   if (owned_fd >= 0) close(owned_fd);
 }
+
