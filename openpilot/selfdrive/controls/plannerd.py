@@ -16,6 +16,7 @@ from openpilot.selfdrive.controls.lib.longitudinal_stopping_lead import Stopping
 from openpilot.selfdrive.controls.lib.lateral_planner import LateralPlanner
 import openpilot.cereal.messaging as messaging
 from openpilot.selfdrive.carrot.carrot_functions import CarrotPlanner
+from opendbc.car.hyundai.values import HyundaiExtFlags
 from openpilot.selfdrive.carrot.radar import effective_radar_track_mode
 from openpilot.selfdrive.carrot.radar_motion.timing import front_radar_distance_delay_s
 
@@ -42,6 +43,7 @@ def main():
     CP.brand,
     CP.radarUnavailable,
     params.get_int("EnableRadarTracks"),
+    classic_238=bool(CP.extFlags & HyundaiExtFlags.RADAR_CLASSIC_238.value),
   )
   live_tracks_longitudinal = CP.brand == "hyundai" and radar_track_mode >= 1
 
