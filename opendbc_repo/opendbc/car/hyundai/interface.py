@@ -6,7 +6,7 @@ from opendbc.car.hyundai.values import HyundaiFlags, CAR, DBC, CANFD_RADAR_SCC_C
                                                    CANFD_HYBRID_STATUS_ADDR, CANFD_HYBRID_STATUS_DLC, \
                                                    EV_MODE_STATUS_ADDR, EV_MODE_STATUS_DLC, bosch_mrrevo14f_bus
 from opendbc.car.hyundai.radar_interface import RADAR_START_ADDR
-from opendbc.car.hyundai.radar_classic_238 import CLASSIC_238_TRACK_MODES, RADAR_TRACK_MODE_CLASSIC_238, classic_238_radar_available
+from opendbc.car.hyundai.radar_classic_238 import CLASSIC_238_TRACK_MODE, classic_238_radar_available
 from opendbc.car.interfaces import CarInterfaceBase
 from opendbc.car.disable_ecu import disable_ecu
 from opendbc.car.hyundai.carcontroller import CarController
@@ -212,26 +212,12 @@ class CarInterface(CarInterfaceBase):
 
     # carrot, if camera_scc enabled, enable openpilotLongitudinalControl
     enable_radar_tracks = params.get_int("EnableRadarTracks")
-    if enable_radar_tracks in CLASSIC_238_TRACK_MODES:
-      # K7 classic 0x238 objects: no ECU write and no 0x500 parser. Mode 5 does not force
-      # openpilot longitudinal (other cars treat 5 exactly like 0); mode 1 keeps its usual
-      # openpilot longitudinal and, on other cars, its 0x500 tracks.
-      if (candidate == CAR.KIA_K7_PE and not ret.flags & HyundaiFlags.CANFD and
-          classic_238_radar_available(fingerprint[1])):
-        ret.extFlags |= HyundaiExtFlags.RADAR_CLASSIC_238.value
-        ret.radarUnavailable = False
-        print(f"##### K7 classic 0x238 radar objects selected (EnableRadarTracks={enable_radar_tracks})")
-      if enable_radar_tracks == RADAR_TRACK_MODE_CLASSIC_238:
-        enable_radar_tracks = 0
-    if enable_radar_tracks == -1:
-      # SCC-only mode uses the stock SCC11 object as a read-only RadarPoint.
-      # It does not require raw 0x500 tracks, ECU diagnostics, or openpilot longitudinal control.
-      ret.radarUnavailable = False
-    if enable_radar_tracks == 4:
-      # Observe pre-enabled raw tracks without disabling the stock SCC ECU or enabling openpilot longitudinal.
-      ret.radarUnavailable = False
-      ret.openpilotLongitudinalControl = False
-    elif ret.flags & HyundaiFlags.CAMERA_SCC.value or enable_radar_tracks > 0 or enable_radar_tracks == -2:
+    # K7 2020: this radar has no 0x500 tracks; mode 1 reads its 0x238 objects instead.
+    if (enable_radar_tracks == CLASSIC_238_TRACK_MODE and candidate == CAR.KIA_K7_PE and
+        not ret.flags & HyundaiFlags.CANFD and classic_238_radar_available(fingerprint[1])):
+      ret.extFlags |= HyundaiExtFlags.RADAR_CLASSIC_238.value
+      print("##### K7 classic 0x238 radar objects selected")
+    if ret.flags & HyundaiFlags.CAMERA_SCC.value or enable_radar_tracks > 0 or enable_radar_tracks == -2:
       ret.radarUnavailable = False
       ret.openpilotLongitudinalControl = True if camera_scc < 3 else False
       print(f"$$$OenpilotLongitudinalControl = True, CAMERA_SCC({ret.flags & HyundaiFlags.CAMERA_SCC.value}) or RadarTracks{enable_radar_tracks}")
@@ -326,8 +312,8 @@ class CarInterface(CarInterfaceBase):
         addr, bus = 0x730, CanBus(CP).ECAN
       disable_ecu(can_recv, can_send, bus=bus, addr=addr, com_cont_req=b'\x28\x83\x01')
 
-    # The K7 0x238 stream needs no track activation; that radar has no 0x500 tracks to enable.
-    if (1 <= params.get_int("EnableRadarTracks") <= 3 and not CP.flags & HyundaiFlags.CANFD and not pedal_interceptor
+    # The K7 0x238 stream needs no track activation.
+    if (params.get_int("EnableRadarTracks") > 0 and not CP.flags & HyundaiFlags.CANFD and not pedal_interceptor
         and not bosch_passive and not CP.extFlags & HyundaiExtFlags.RADAR_CLASSIC_238.value):
       result = enable_radar_tracks(CP, can_recv, can_send)
       params.put_bool("EnableRadarTracksResult", result)
@@ -342,39 +328,26 @@ def enable_radar_tracks(CP, logcan, sendcan):
 
   ret = False
   sccBus = 2 if CP.flags & HyundaiFlags.CAMERA_SCC.value else 0
+  rdr_fw = None
   rdr_fw_address = 0x7d0 #
-  stage = "session"
-
-  def radar_recv(*args, **kwargs):
-    packets = logcan(*args, **kwargs)
-    for packet in packets:
-      for frame in packet:
-        if frame.address == rdr_fw_address + 8 and frame.src == sccBus:
-          data = bytes(frame.dat)
-          print(f"radar diagnostic rx bus={sccBus} addr=0x{frame.address:x} data={data.hex()}")
-          if len(data) >= 4 and data[0] >> 4 == 0 and (data[0] & 0xf) >= 3 and data[1] == 0x7f:
-            print(f"radar diagnostic rejected service=0x{data[2]:02x} NRC=0x{data[3]:02x}")
-    return packets
-
   try:
-    print(f"radar diagnostic stage={stage} bus={sccBus} request=1007")
-    query = IsoTpParallelQuery(sendcan, radar_recv, sccBus, [rdr_fw_address], [b'\x10\x07'], [b'\x50\x07'])
-    if (rdr_fw_address, None) in query.get_data(0.5, total_timeout=1.0):
-      stage = "write"
-      new_config = b"\x00\x00\x00\x01\x00\x01"
-      dataId = b'\x01\x42'
-      WRITE_DAT_REQUEST = b'\x2e'
-      WRITE_DAT_RESPONSE = b'\x6e' + dataId
-      request = WRITE_DAT_REQUEST + dataId + new_config
-      print(f"radar diagnostic stage={stage} bus={sccBus} request={request.hex()}")
-      query = IsoTpParallelQuery(sendcan, radar_recv, sccBus, [rdr_fw_address], [request], [WRITE_DAT_RESPONSE])
-      result = query.get_data(0.5, total_timeout=1.0)
-      ret = (rdr_fw_address, None) in result
-    if ret:
-      print("radar configuration write acknowledged; track reception is not verified")
-    else:
-      print(f"radar diagnostic stage={stage} failed: no matching positive response; check rx/NRC logs")
+    try:
+      query = IsoTpParallelQuery(sendcan, logcan, sccBus, [rdr_fw_address], [b'\x10\x07'], [b'\x50\x07'])
+      for addr, dat in query.get_data(0.1).items(): # pylint: disable=unused-variable
+        print("ecu write data by id ...")
+        new_config = b"\x00\x00\x00\x01\x00\x01"
+        #new_config = b"\x00\x00\x00\x00\x00\x01"
+        dataId = b'\x01\x42'
+        WRITE_DAT_REQUEST = b'\x2e'
+        WRITE_DAT_RESPONSE = b'\x68'
+        query = IsoTpParallelQuery(sendcan, logcan, sccBus, [rdr_fw_address], [WRITE_DAT_REQUEST+dataId+new_config], [WRITE_DAT_RESPONSE])
+        result = query.get_data(0)
+        print("result=", result)
+        ret = True
+        break
+    except Exception as e:
+      print(f"Failed : {e}") 
   except Exception as e:
-    print(f"radar diagnostic stage={stage} failed: {type(e).__name__}: {e}")
+    print("##############  Failed to enable tracks" + str(e))
   print("################ END Try to enable radar tracks")
   return ret

@@ -1,4 +1,4 @@
-"""No catch-up acceleration toward a slower lead (K7 mode 5).
+"""No catch-up acceleration toward a slower lead (K7 0x238 radar).
 
 When the lead is far but slower than the car, the MPC still accelerates toward
 the set speed because the gap is larger than desired, then brakes once the gap

@@ -62,7 +62,7 @@ class LongitudinalPlanner:
     self.fcw = False
     # VW MEB(ID.4/ID.5)에서만 True. 가속 오버라이드 중 출발 FCW 오탐을 끄기 위한 게이트.
     self.is_vw_meb = is_volkswagen_meb(CP)
-    # K7 EnableRadarTracks=5 follows its radar lead like a vision lead.
+    # The K7 0x238 radar follows its radar lead like a vision lead.
     self.radar_comfort_extras = radar_lead_comfort_extras_enabled(
       CP.brand, bool(CP.extFlags & HyundaiExtFlags.RADAR_CLASSIC_238.value))
     self.dt = dt
@@ -238,7 +238,7 @@ class LongitudinalPlanner:
       cutin_predecel_limit,
     )
 
-    # K7 mode 5: no catch-up acceleration toward a slower lead (only removes acceleration).
+    # K7 0x238 radar: no catch-up acceleration toward a slower lead (only removes acceleration).
     if (not self.radar_comfort_extras and not reset_state and not sm['carState'].gasPressed
         and not carrot.lane_change_active):
       accel_limits_turns[1] = apply_closing_lead_accel_limit(

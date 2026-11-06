@@ -265,7 +265,7 @@ function normalizeRadar(overlayState, egoSpeedMps = null) {
     }));
   };
 
-  // 0x238 계열 점의 trackId는 레이더 자체 객체 ID(0-63)이다. EnableRadarTracks=5의
+  // 0x238 계열 점의 trackId는 레이더 자체 객체 ID(0-63)이다. K7 EnableRadarTracks=1의
   // liveTracks 점은 같은 스캔의 같은 좌표로 나오므로, 그 점에 객체 ID를 붙이고
   // 표시 전용 점은 한 번만 그린다.
   const classicTracks = [];

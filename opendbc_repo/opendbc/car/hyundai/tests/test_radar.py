@@ -610,7 +610,7 @@ class TestK7Classic238RadarMode:
   SCAN_NS = 30_000_000
 
   @staticmethod
-  def make_interface(monkeypatch, mode=5, classic_flag=True, car=CAR.KIA_K7_PE, flags=0):
+  def make_interface(monkeypatch, mode=1, classic_flag=True, car=CAR.KIA_K7_PE, flags=0):
     class FakeParams:
       def get_int(self, key):
         return mode if key == "EnableRadarTracks" else 0
@@ -658,7 +658,7 @@ class TestK7Classic238RadarMode:
     assert not legacy.classic_238
     assert legacy.rcp_tracks is not None
 
-  def test_mode5_uses_classic_stream_without_legacy_parser(self, monkeypatch):
+  def test_classic_stream_replaces_legacy_parser(self, monkeypatch):
     radar_interface = self.make_interface(monkeypatch)
     assert radar_interface.classic_238
     assert radar_interface.radar_tracks
@@ -757,13 +757,6 @@ class TestK7Classic238RadarMode:
     assert points[44][0][0] == "scc" and points[44][0][1] == pytest.approx(20.0)
     assert set(points[59]) == {4000}                        # SCC11 gone > 0.3 s: back to 0x238
     assert not any(error for _, error, _ in published)
-
-  def test_mode5_without_classic_detection_behaves_like_mode0(self, monkeypatch):
-    radar_interface = self.make_interface(monkeypatch, classic_flag=False)
-    assert not radar_interface.classic_238
-    assert not radar_interface.radar_tracks
-    assert radar_interface.rcp_tracks is None
-    assert radar_interface.rcp_scc is not None
 
   @pytest.mark.parametrize("mode", (2, 3))
   def test_scc_modes_keep_legacy_parser(self, monkeypatch, mode):

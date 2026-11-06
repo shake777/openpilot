@@ -108,7 +108,6 @@ class DPathRadarD:
       CP.brand,
       CP.radarUnavailable,
       params.get_int("EnableRadarTracks"),
-      classic_238=classic_238,
     )
     self.controller = DPathRadarController(
       prefer_corner_radar=corner_radar_enabled(
