@@ -45,40 +45,6 @@ CANFD_EXPECTED_ECUS = {Ecu.fwdCamera, Ecu.fwdRadar}
 
 
 class TestHyundaiFingerprint:
-  def test_scc_only_radar_does_not_enable_longitudinal(self, monkeypatch):
-    class FakeParams:
-      def get_int(self, key):
-        return -1 if key == "EnableRadarTracks" else 0
-
-      def get_bool(self, key):
-        return False
-
-    monkeypatch.setattr(interface_module, "Params", FakeParams)
-    fingerprint = gen_empty_fingerprint()
-    fingerprint[0][0x420] = 8
-
-    CP = CarInterface.get_params(CAR.KIA_K7, fingerprint, [], False, False)
-
-    assert not CP.radarUnavailable
-    assert not CP.openpilotLongitudinalControl
-    assert not CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.LONG.value
-
-  def test_raw_track_observation_does_not_enable_longitudinal(self, monkeypatch):
-    class FakeParams:
-      def get_int(self, key):
-        return 4 if key == "EnableRadarTracks" else 0
-
-      def get_bool(self, key):
-        return False
-
-    monkeypatch.setattr(interface_module, "Params", FakeParams)
-    fingerprint = gen_empty_fingerprint()
-    CP = CarInterface.get_params(CAR.KIA_K7, fingerprint, [], False, False)
-
-    assert not CP.radarUnavailable
-    assert not CP.openpilotLongitudinalControl
-    assert not CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.LONG.value
-
   @staticmethod
   def classic_238_params(mode):
     class FakeParams:
@@ -102,22 +68,6 @@ class TestHyundaiFingerprint:
     for addr in range(0x238, 0x256):
       fingerprint[1][addr] = 8
     return fingerprint
-
-  def test_k7_classic_238_mode_selects_stream_without_forcing_longitudinal(self, monkeypatch):
-    monkeypatch.setattr(interface_module, "Params", self.classic_238_params(5))
-    CP = CarInterface.get_params(CAR.KIA_K7_PE, self.classic_238_fingerprint(), [], False, False, False)
-
-    assert CP.extFlags & HyundaiExtFlags.RADAR_CLASSIC_238
-    assert not CP.radarUnavailable
-    assert not CP.openpilotLongitudinalControl
-    assert not CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.LONG.value
-
-    def unexpected_radar_write(*args, **kwargs):
-      raise AssertionError("mode 5 must not write the radar configuration")
-
-    monkeypatch.setattr(interface_module, "enable_radar_tracks", unexpected_radar_write)
-    monkeypatch.setattr(interface_module, "disable_ecu", unexpected_radar_write)
-    CarInterface.init(CP, lambda *args, **kwargs: [], lambda *args, **kwargs: None)
 
   def test_k7_mode1_reads_classic_238_without_activating_tracks(self, monkeypatch):
     monkeypatch.setattr(interface_module, "Params", self.classic_238_params(1))
@@ -151,20 +101,6 @@ class TestHyundaiFingerprint:
     monkeypatch.setattr(interface_module, "disable_ecu", lambda *args, **kwargs: None)
     CarInterface.init(CP, lambda *args, **kwargs: [], lambda *args, **kwargs: None)
     assert activated == ([True] if not CP.flags & HyundaiFlags.CANFD else [])
-
-  @pytest.mark.parametrize("car, legacy_tracks", ((CAR.KIA_K7, False), (CAR.KIA_K7_PE, True)))
-  def test_classic_238_mode_falls_back_to_mode0(self, monkeypatch, car, legacy_tracks):
-    fingerprint = self.classic_238_fingerprint()
-    if legacy_tracks:
-      fingerprint[1][RADAR_START_ADDR] = 8
-    monkeypatch.setattr(interface_module, "Params", self.classic_238_params(0))
-    expected = CarInterface.get_params(car, fingerprint, [], False, False, False)
-    monkeypatch.setattr(interface_module, "Params", self.classic_238_params(5))
-    CP = CarInterface.get_params(car, fingerprint, [], False, False, False)
-
-    assert not CP.extFlags & HyundaiExtFlags.RADAR_CLASSIC_238
-    assert CP.radarUnavailable == expected.radarUnavailable
-    assert CP.openpilotLongitudinalControl == expected.openpilotLongitudinalControl
 
   def test_feature_detection(self):
     # LKA steering

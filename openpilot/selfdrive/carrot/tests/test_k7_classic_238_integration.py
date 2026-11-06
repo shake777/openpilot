@@ -59,7 +59,7 @@ def test_settings_preserve_k7_modes_and_updated_scc_exclusion():
         yield from settings(child)
 
   radar = next(item for item in settings(data) if item.get('name') == 'EnableRadarTracks')
-  assert (radar['min'], radar['max'], radar['default']) == (-2, 5, 0)
+  assert (radar['min'], radar['max'], radar['default']) == (-2, 3, 0)
   assert 'K7 2020' in radar['descr'] and 'K7 2020' in radar['edescr']
   assert '0x238' in radar['descr'] and '0x238' in radar['edescr']
   assert '옆 차로' in radar['descr'] and 'another lane' in radar['edescr']

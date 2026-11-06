@@ -23,14 +23,13 @@ from opendbc.car.hyundai.radar_classic_238 import (
   CLASSIC_238_END_ADDR,
   CLASSIC_238_MAX_TRIPLET_AGE_NS,
   CLASSIC_238_START_ADDR,
-  CLASSIC_238_TRACK_MODES,
-  RADAR_TRACK_MODE_CLASSIC_238,
+  CLASSIC_238_TRACK_MODE,
   Classic238DisplayTracker,
   classic_238_longitudinal_tracks,
 )
 
 SCC_TID = 0
-# Mode 5: a radar that also sends stock SCC11/SCC12 (e.g. wired behind the C4) is followed
+# A K7 radar that also sends stock SCC11/SCC12 (e.g. wired behind the C4) is followed
 # through SCC once SCC11 has arrived continuously for this long; 0x238 objects then stay
 # reference-only (display/recording). A gap longer than CLASSIC_238_SCC_MAX_GAP_NS
 # returns control to the 0x238 objects.
@@ -585,12 +584,11 @@ class RadarInterface(RadarInterfaceBase):
 
     self.params = Params()
     self.radar_track_mode = self.params.get_int("EnableRadarTracks")
-    # Modes 1 and 5 read the K7 0x238 stream only when the car interface selected it; otherwise
-    # mode 1 keeps its 0x500 tracks and mode 5 behaves exactly like mode 0.
-    self.classic_238 = (not self.canfd and self.radar_track_mode in CLASSIC_238_TRACK_MODES and
+    # Mode 1 reads the K7 0x238 stream only when the car interface selected it; otherwise it
+    # keeps its 0x500 tracks.
+    self.classic_238 = (not self.canfd and self.radar_track_mode == CLASSIC_238_TRACK_MODE and
                         bool(CP.extFlags & HyundaiExtFlags.RADAR_CLASSIC_238.value))
-    self.radar_tracks = self.classic_238 or (self.radar_track_mode >= 1 and
-                                             self.radar_track_mode != RADAR_TRACK_MODE_CLASSIC_238)
+    self.radar_tracks = self.radar_track_mode >= 1
     self.bosch = None
     self._bosch_objects = ()
     self._bosch_now_ns = 0
