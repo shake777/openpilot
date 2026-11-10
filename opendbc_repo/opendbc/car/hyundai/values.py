@@ -165,6 +165,7 @@ class HyundaiExtFlags(IntFlag):
   EV_MODE_STATUS_230 = 2 ** 16  # ECAN 0x230/DLC32 exposes the hybrid power-flow mode used for the EV indicator
   BOSCH_RADAR = 2 ** 17  # passive Bosch MRRevo14F 0x601-0x612 receive provider (see BOSCH_MRREVO14F_CAR)
   BOSCH_RADAR_BUS1 = 2 ** 18  # Observed receive src=1; otherwise use LKAS camera CAN (src=2)
+  RADAR_CLASSIC_238 = 2 ** 19  # KIA_K7_PE bus 1 0x238-0x255 object triplets selected by EnableRadarTracks=1/5
 
 class Footnote(Enum):
   CANFD = CarFootnote(

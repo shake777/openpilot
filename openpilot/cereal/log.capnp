@@ -2742,6 +2742,7 @@ struct Event {
     livestreamDriverEncodeData @122 :EncodeData;
     youtubeRoadEncodeData @152 :EncodeData;
     youtubeRoadEncodeIdx @153 :EncodeIndex;
+    classicRadarTracks @155 :Car.RadarData;  # @154 is upstream customReservedRawData1 (2026-10-09)
 
     # *********** Custom: reserved for forks ***********
 
