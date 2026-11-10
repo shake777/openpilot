@@ -153,7 +153,7 @@ def test_classic_radar_label_shows_object_id_and_speed(model_renderer_module, mo
   point = SimpleNamespace(dRel=7.0, yRel=0.3, trackState=2, trackId=track_id, vLead=v_lead)
 
   class Messages(dict):
-    valid = {'classicRadarTracks': True, 'modelV2': True}
+    valid = {'classicRadarTracks': True, 'modelV2': True, 'radarState': False}
 
   messages = Messages(classicRadarTracks=SimpleNamespace(points=[point]),
                       modelV2=SimpleNamespace(laneLines=[None, None, lines]))

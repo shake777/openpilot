@@ -1,5 +1,529 @@
 # Repository memory
 
+- 2026-11-09: Fix the four full-build Bluetooth import failures previously
+  reported as pre-existing. Cluster paths expose openpilot/tools as top-level
+  tools, hiding root tools/jetlink even with the repository first on sys.path.
+  Extend only that legacy package namespace using pkgutil; canonical
+  openpilot.tools stays scoped. Fresh-process regressions cover both path orders,
+  vehicle-only paths, preloaded tools, real Monitor/Owner and updater imports.
+  Four cases reproduce failure before correction; all six pass after. Desktop
+  Bluetooth61 pass/one Linux-only skip. This is a production import failure
+  under the same path condition; prior CI failure does not establish device safety.
+  Reviewed PV5 captures show controlsd NameError, plus signal-camera geometry
+  rejection; no tools.jetlink exception in those three captures.
+
+- 2026-11-09: PV5 uploaded process_crash13:30:20 at e318f767 proves controlsd
+  repeatedly exits in publish with undefined t_since_plan. Introduced by our
+  7d337 stop-object change; the previous state_control/helper checks missed the
+  publish scope. Compute plan age from SubMaster in publish. Complete-method
+  real-cereal regression reproduces the NameError before correction and passes
+  54 cases afterward, including inactive/non-CANFD and stale/invalid inputs.
+  Add it to native Signal and full-build CI. Local related97 and F821 check pass.
+  Vehicle installation/restart and physical operation require separate evidence.
+
+- 2026-11-09: Casper EV 1ef4/12 has bus2 SCC11 fixed10.4m/+0.2m/s in
+  2163/2217 plausible objects, 176 SCC/vision handoffs, original FCA fault297/2990.
+  Panda hardwareCAN2/canState1 error-passive has606231 new error IRQs/59.9s;
+  this is distinct from logical SCC bus2, whose counter is continuous. Owner
+  confirms stock wiring; no proven common electrical root cause. Add confirmed
+  current CAN error-storm and recurring raw Casper FCA fault alerts/no-entry/
+  disable; AlwaysLateral cannot bypass them. Preserve raw evidence and outgoing
+  FCA compatibility handling. Replay confirms CAN0.591s/FCA2.141s into segment.
+  Separately owner requests CANFD no-lead signal-stop3m object plus cone; newest
+  recurrence log deleted. Archived I5PE stock1138 StopReq packets have object2,
+  distance3.4..4.4m; older failure has no-object204.6m/239.4mps. Camera-SCC trial
+  fills3m/relative-vEgo/state2 only after final low-speed StopReq/interlocks and
+  fresh signal-stop/no-real-lead gates. No radar/model/MPC/aReq/jerk/band change.
+  Generated-packet marker drives fresh C3/C4 cone; not ESC acceptance or OEM icon.
+  Timestamp-sorted2998-call replay changes681 object/CRC packets,2317 identical.
+  Local465/Wiki25 pass; final native42554894007 passes1960+362subtests/40skip,
+  131backend+216focused. Full build/control/UI pass; final group retains the same
+  four tools.jetlink Bluetooth imports as baseline0df836. Code7d337b0549 plus
+  coneb8f7f3b405; NAS scheduled replay7d337 verified1196 frames/hash/public page.
+  Normal GitPull/full comma restart, no vehicle installation or physical hold
+  proof. See docs/casper_scc_input_20261109.md and docs/canfd_signal_stop_object_20261109.md.
+
+- 2026-11-09: Ioniq 5 PE route 11bb/7 camera shows a manual move into the
+  right lane near 37 s. Speed fell from above 30 to 26.43 km/h during approach;
+  wheel angle was about 22 degrees. The 30 km/h boundary observer reset.
+  Owner requests a 5 km/h minimum for both manual lamp features. Lower the PE
+  manual lane observer and external output admission to 5 km/h; manual turns
+  already use 5–60. Keep lane geometry, torque, feedback isolation, and the
+  separate Tesla/steering thresholds. Low-speed lane relabels do not suppress
+  a turn independently supported by driver steering and measured rotation.
+  Offline A/B through observation and lamp policy, ready adapter assumed:
+  new right request at 36.475 s; unchanged left turn later in this segment.
+  In 14 comparison segments all 19 previous requests matched in time and side.
+  781 focused tests passed, 7 platform-specific skips. No physical lamp test.
+
+- On 2026-11-08 the owner requests slightly earlier manual turn indications and
+  asks about closely spaced turns. ManualTurnIndicator alone uses 42 degrees
+  steering/22 degrees growth and 100 ms confirmation. Its next observation
+  requires two seconds from last ownership renewal, one continuous dark second
+  and fresh steering. Torque duration, yaw/curve rejection, isolation of lamp
+  feedback and the other observers' quiet periods are preserved. A/B replay of
+  14528 recorded model frames matched all 10 indications on side and segment;
+  nine occurred earlier (median advance 0.054 s, maximum 1.253 s). Real lamp
+  response and the owner's unrecorded missed turn remain unverified.
+
+- On 2026-11-08 the owner requests voice lane changes to use normal lane-change
+  admission and issue the external indicator in parallel. This supersedes the
+  external-adapter confirmation prerequisite. Keep native and Tesla signal gates.
+  Ioniq 5 PE rlog 11b9/2 records one voice request, same-side physical flashes,
+  B1 override without accepted ID, preLaneChange for 3 s and no steering start.
+  The 0x413 lever bit outlasts the tap echo window. Receiver subreason is
+  unrecorded. A desktop replay of recorded inputs with a bound external adapter
+  and absent ACK reproduced the old timeout; new helper starts and requests
+  the left lamp on the same frame at segment 20.702 s. No actual crossing proof.
+
+- On 2026-11-08, owner requests an ATC-independent ManualTurnIndicator option.
+  DefaultOFF/Ioniq5PE/supported indicator adapter/AutoBlinker1or2. Shared lamp-only
+  observer uses5..60km/h, pressed same-side torque150ms/recent800ms, angle45deg
+  plus25deg growth, yaw3deg/s and1.5deg rotation/150ms confirmation. Recognized
+  matching lane curves suppress admission. Fresh pose/CAN/model and ownership
+  gates remain; existing journal/echo/ACK path isolates feedback before steering.
+  Return15deg+yaw<=3deg/s/moving300ms ends, opposite pressed torque pastzero
+  cancels; stop retains up to30s. ATC/nav/lateral activation are not admission.
+  Current14hash-matched logs174387477B plus prior21logs give39081 replayframes,
+  27candidates. Current10candidates reviewed with video include one street-right
+  turn and nine parking-area/ramp/entry maneuvers; unwanted parking indications
+  remain possible. Prior20manual requests have no candidate overlap within4s;
+  remaining older candidates lack new video labels, so no false-positive-rate
+  claim. Morning right0+45.611s starts0.803s after first pressed torque and ends
+  50.164s. Synthetic counterexamples/source ATC0..3 OFF/ON covered; local668 checks
+  pass. C3/C4 manual-turn reason; old USB HUD uses driver category/turning reason.
+  KO/EN guides/catalog updated. Normal GitPull/full comma restart then opt in.
+  No vehicle writes, CAN actuation, model or Jetson bundle; physical lamps untested.
+  Private evidence .analysis/scratch/2026-11-08-manual-turn.
+
+- On 2026-11-08, owner requests PR572 Tesla review/integration with code-only
+  validation because no Tesla is available. Merge contributor d40c8d247b into
+  current Wip, preserving newer native voice indicators and assistant admission.
+  Keep existing shared AlwaysLateral initialization default1, excluding PR's
+  global default0 change. Tesla gesture now toggles AlwaysLateral; new manual,
+  model-desire/path lamp options and CAN traffic-stop remain defaultOFF.
+  Traffic stop accepts only vision-backed8byte APP_trafficControl with active
+  OP longitudinal; retains other obstacles and normal soft-disable on loss.
+  Desktop1042/23subtests pass with32 native-safety cases deferred to Linux;
+  Wiki25 and focused Ruff pass. Add native MPC/planner, gesture/default tests
+  to full-build CI. Linux Signal42433213035 passes1963/40skip/362subtests plus131;
+  eGPU/Jetson/docs pass. First full build passes50 new native checks but one
+  gesture test exposes a pre-existing fixture missing set_lane_change_blinkers
+  after voice integration. Bind the real helper; desktop full-control11 pass.
+  No vehicle writes or physical lamp/braking acceptance.
+
+- CarrotAssist 0.2.10 lets the user copy a Korean or English custom-instructions prompt from the device-name dialog. It shows how to append and save the prompt in ChatGPT. Copying does not modify the user’s ChatGPT account.
+
+- CarrotAssist 0.2.9 gives the Android recognizer left/right phrase hints and explains recognition failures. Keep the final-result confidence, direction agreement and age checks. No live maneuver or cabin accuracy measurement.
+
+- CarrotAssist 0.2.8 phone voice supports numbered results from its most recent search in the same listening session. Bind the position to the displayed row, recheck the parameter before committing, and announce its actual name.
+
+- CarrotAssist 0.2.7 phone voice searches the visible device catalog and writes explicit absolute integer settings without a relay session. Use the existing same-origin setting grant, prepare/commit validation and device readback. Never convert a broad search, ambiguous name or conflicting numerical recognition into a write.
+
+- CarrotAssist 0.2.6 supports foreground Android 12+ on-device speech recognition.
+  A local WebView readiness check precedes greeting/listening; no ChatGPT account,
+  relay pairing, cloud transcription or MCP grant is required on the direct route.
+  Korean/English explicit lane requests use the existing local driving grant and
+  vehicle gates. Execute only final, unambiguous recognition, with a bounded
+  direction-specific challenge if scores are missing. Opening AutoBlinkerControl
+  needs no driving grant. Questions launch the default assistant; repeat them in
+  that voice window. Support depends on the installed language model. The rules
+  and transport are tested offline; no real maneuver or cabin accuracy claim.
+
+- Voice lane changes retain normal admission on all supported vehicles, with or
+  without indicator hardware. Bind optional signaling once per request to an active
+  receiver on the current vehicle (AutoBlinkerControl=2), a supported native output,
+  or the existing Tesla path. After selection, timeout or loss never falls back to
+  unsignaled motion. External BLE/SPAS support follows receiver checks. PEAK/CANable
+  retains its verified CAN profile. No live maneuver or actual lamp test.
+
+- 2026-11-07 mini voice follow-up: two correctly transcribed “왼쪽으로 차로 변경”
+  refusals with no visible tool call; authenticated readback can_drive=true,
+  browser_online=true, last drive request none. Native greeting verifies web
+  pairing/connectivity only. The phone disabled both Android assist structure
+  and screenshot sharing; neither was changed. Account context in relay 0.7.8
+  reports vehicle telemetry as unobserved rather than hard-coded disconnected.
+  No live maneuver; this does not force plugin activation in a new mini session.
+
+- CarrotAssist 0.2.5 (code12) startup TTS announces an available device Git update once;
+  the native greeting ends before showAssist. No startup question, affirmative handler,
+  maintenance proposal or reboot. The optional carrot.tools grant also supports a fixed
+  Naver Map launch through updated Carrot Web and the visible Android wrapper. Only
+  the installed com.nhn.android.nmap launcher can be requested. Report OS acceptance
+  separately from the map actually appearing. No claim of live spoken end-to-end testing.
+
+- CarrotAssist 0.2.4 (code11) moves the microphone into a draggable 68dp
+  in-app button with normalized saved coordinates. Toolbar device-name settings
+  provide opt-in auto-open once per device discovery, with a greeting/safe-drive
+  message and GitPull/restart question when current device Git status verifies a
+  nondiverged update, even while driving. No Git or reboot is executed at startup.
+  Manual taps skip the greeting. Both paths inspect the active WebView session
+  before opening showAssist, with up to 3 transient attempts and foreground
+  cancellation. Startup Android assist content is optional; MCP cannot suppress
+  all ChatGPT mini preambles. Relay0.7.6 returns explicit no-submit/no-retry
+  outcomes for duplicate/conflicting requests without queuing them. Phone tested
+  button drag, tap and mini opening; emulator checks include saved position and
+  resize. Temporary relay downtime produced a real startup alert during deployment.
+
+- On 2026-11-07 voice follow-up, actual mini conversations showed an unsupported
+  response without visible tools and a later 14-second turn with a lane tool call
+  and unnecessary dashboard question. Current account can_drive=true; last relay
+  request ended unverified (delivery_or_feedback_expired), not confirmed completion.
+  Relay0.7.5 caps first-ack wait at about 400 ms, reports queued/first progress
+  promptly, and reads latest status immediately on explicit follow-up. Late vehicle
+  results keep the same request ID. No automatic retry or scope change. Model
+  preambles and tool selection are not under deterministic relay control. No live
+  maneuver triggered during diagnosis or tests.
+
+- On 2026-11-07, owner rejects full-app and Samsung pop-up voice UI; keep native
+  showAssist mini overlay. Private phone APK0.2.3/code10 was restored to the0.2.2
+  behavior; not publicly released and repository Android sources remain0.2.2.
+  Outside web touch dismisses ChatGPT mini without activating the underlying tab;
+  continuous voice through that dismissal remains unresolved. Do not promise it.
+  During drive-permission audit, initial live context was can_drive=false; later
+  persisted grant and live Codex/ChatGPT web context verify drive/settings/tools
+  true. Do not claim owner never approved, silently union grants, or infer when
+  the connection changed. Read-only diagnostics only; no driving request executed.
+  Updated stale plugin description that incorrectly said driving unsupported.
+  Relay0.7.4 makes clear left/right lane and speed requests tool-first, without
+  preamble or context/status/catalog lookups. Existing authorization/vehicle checks,
+  expiry/dedup/no-retry remain. Model/network latency is not bounded by prompting.
+  29 relay checks and KO/EN docs validator passed. NAS build035779c92085 exited0;
+  public health0.7.4 and live request-first instructions verified. No vehicle pull.
+
+- On 2026-11-07 follow-up, cached ChatGPT plugin tool descriptions still demanded
+  confirmation after relay0.7.3. Refreshed plugin metadata and verified new text.
+  A NEW web conversation then reproduced a separate ChatGPT commit approval card.
+  Owner explicitly chose CarrotAssist only Allow all actions/full_access via the
+  plugin-management tool; readback verifies custom override, global default stays
+  low-risk actions. Old expired approval was denied, not replayed. New conversation
+  applied CruiseMaxVals0 240->250 without another approval; independent read250.
+  This account choice is NOT an automatic permission for other users. Their app
+  setup explains plugin-wide scope, account-owned selection and tool refresh.
+  No new OAuth/local drive/tools scopes. Phone0.2.2 unchanged. Background voice
+  was already enabled, but owner reported small-overlay dismissal ended voice.
+  Started voice in full ChatGPT app, Home->CarrotAssist, touched settings tab;
+  green ChatGPT indicator remained and owner confirmed audible reply. External
+  assistant window sizing/listening state is not controlled/exposed by our app;
+  never label our bridge connection or an invocation flag as confirmed listening.
+  KO/EN user guides, KO/EN/ZH helper and Guide-CarrotAssist Wiki document both flows.
+  Isolated web build, five focused assistant checks, translation syntax and user
+  docs validation pass. Vehicle files were not deployed or restarted this turn.
+
+- On 2026-11-07, owner explicitly rejects repeated conversational confirmation for
+  clear, in-range setting commands. Relay0.7.3 treats the original exact target/value
+  or adjustment command as authorization; ambiguous requests/AI recommendations
+  still require clarification. Internal prepare/commit, bounds, fresh value checks,
+  expiry, ownership, readback and history remain; tools maintenance confirmations
+  and ChatGPT platform approvals are separate. Old firmware prepared results are
+  exposed as confirmation_required=false/commit_required=true, not auto-written.
+  Web now refreshes existing same-origin setting permission per new request and
+  allows reads during editing; read-only code input focus no longer blocks writes.
+  Never replay cached failures/writes when a grant changes. Previous live failure
+  said local permission absent, then two live reads returned250; exact earlier
+  cause is not established. A later commit queued while phone auto-locked; owner
+  unlocked, same request completed once, CruiseMaxVals0 250->240. Separate live
+  readback and phone UI both verify240. No vehicle GitPull/restart was performed;
+  web fixes are prepared for owner GitPull/reopen. APK stays0.2.2.
+  Relay29/web4/Python18 checks and isolated web build pass. NAS0.7.3 is running,
+  image9912e4cf1cc2, build exit0/public health/context verified. Initial deployment
+  failed because an overbroad version replacement touched cookie dependency;
+  restored dependency lock entries, changed only root versions, rebuilt successfully.
+  Never globally replace package version strings in lockfiles.
+- On 2026-11-07, reproduced the remaining Android0.2.1 offline case: WebStorage
+  getOrigins omits localStorage-only origins, and last_address already pointed to
+  the new office IP. Android0.2.2(code9) persists bounded origin history and reads
+  only local-address hints from this app's legacy WebView storage as an upgrade
+  fallback. Actual tokens still come from isolated WebView and relay validation;
+  database bytes never authorize a connection. Local grants never gate navigation.
+  Signed0.2.2 installed on owner's USB phone; existing account moved from hotspot
+  to192.168.0.178 without code or vehicle GitPull. English screen-brightness search
+  and actual screen-open acknowledged opened; no setting writes/driving commands.
+  Native UI now follows phone language (KO/English fallback), web language remains
+  separate; relay0.7.2 consent follows browser language and AI follows user language.
+  Java policy72, emulator WebView62/English native screen, MCP29 checks pass.
+  NAS0.7.2 built/started exit0 image615f4d14150f; public health and owner online
+  status verified after restart. Actual spoken-English accents are not tested.
+  Final APK SHA256 c9e4e659a3d0fee217342aa0b14477f9feed5d1413210058eca21db788b62842.
+- On 2026-11-07, owner reports overnight/offline use after switching hotspot
+  10.225.84.19 to office 192.168.0.178. Discovery worked but WebView storage and
+  relay/local grants were origin-bound. Owner explicitly rejects matching the
+  previous device as a condition: the Carrot Web currently selected/opened in
+  CarrotAssist must become ChatGPT's target, even a different Carrot device.
+  Commit2856def933 / Android0.2.1(code8) restores app-owned saved ChatGPT browser
+  capabilities from isolated network-blocked WebViews, ranks authenticated account
+  activity, relocates the existing relay session, preserves OAuth scopes and
+  discards pending screen/settings/drive/Tools requests. No device-identity gate.
+  Optional local-permission restoration uses a double-hash/HMAC challenge before
+  sending an existing bearer grant; failed/absent/different-device permissions do
+  NOT block account/screen connection or create new privileges. Destination-local
+  permissions stay in effect. An unreachable address after backgrounding triggers
+  discovery. Outside Chrome/Samsung storage is not imported. Uninstall/data reset
+  still removes app authorization. Never replay old driving commands on reconnect.
+  Python68/MCP27/Java policy66/emulator WebView44 checks and KO/EN docs validation
+  pass. NAS0.7.1 built/started exit0(image4b31e0f2f6ca); health/discovery verified,
+  existing owner's OAuth survives but still points offline to old IP until phone
+  update/reopen. APK0.2.1 release and app-specific update.json(code8) published,
+  downloaded hash verified:4f09a0c56b40e92dda8583d334f46e802484f43053c542ccd27625d49f336336.
+  Signing identity matches0.2.0. Wiki66be9c5 pushed; both repos0/0. Physical phone
+  absent from USB; no live phone network-switch or vehicle command test, no vehicle
+  GitPull/restart performed. Owner needs phone app update; local permission recovery
+  also needs parked device GitPull/restart. Keep unrelated working changes intact.
+
+- On 2026-11-06, owner requests voice control of Carrot Web Tools buttons and
+  novice-readable code-entry instructions. Relay0.7.0 adds separate carrot.tools
+  consent plus a stationary-issued local grant; existing scopes never expand.
+  Fixed actions use existing Tools jobs: GitPull/sync/HEAD reset, reboot/rebuild,
+  calibration reset, deletion, backup, tmux capture/upload request and explicit
+  screen-record on/off. Prepare60s -> explain effect -> follow-up confirmation ->
+  consume/commit; maintenance rechecks parked/disengaged at dispatch. No shell,
+  supplied paths/URLs/commit targets. File/QR/clipboard/repository-reset selection
+  remains on the phone. Panels open through existing UI. Reboot/upload/recording
+  acceptance is not actual completion; no replay after unknown/expired delivery.
+  Job status is owner-bound and returns no logs/backups/IDs. Local job ownership
+  is in-memory; after server restart inspect Tools history, do not reissue.
+  Setup now separates first registration from Plugins > Installed > CarrotAssist
+  > Reconnect; open approval page BEFORE creating code, paste only into that form,
+  never mini-mode chat. App labels/KO+EN guides/Wiki clarify Play Store, expiry,
+  offline state and new permission. NAS0.7.0 built/started exit0, health and OAuth
+  discovery verified. API63/MCP23/focused web8 and isolated build/Ruff pass.
+  No APK change, no live vehicle maintenance/drive test or device update; owner
+  must parked GitPull/restart/reload and add Tools permission on both sides.
+
+- On 2026-11-06 voice setup follow-up, owner reaches real OAuth consent but reports
+  invalid/expired code. Reproduced one possible cause: regenerate account code at
+  initial browser lease299s, claim2s later rejects despite298s code validity.
+  Relay0.6.1 extends only unpaired browser lease to newly issued account deadline;
+  sweeper uses that lease, legacy chat-code expiry remains unchanged. Two new
+  regressions plus existing MCP suites20 pass. This does not establish that every
+  reported expiry shares this cause. Owner had also pasted codes in mini voice
+  chat and confused Play Store with setup link; consent code belongs only in the
+  Carrot HTTPS approval form reached via ChatGPT Plugins > Installed > CarrotAssist
+  > Reconnect. No phone/vehicle update needed for this server fix. Never request
+  that authorization codes be sent in chat or silently expand old scopes.
+
+- On 2026-11-06, owner requests one continuing ChatGPT voice conversation mixing
+  settings and direct lane/set-speed commands. Rejects per-command buttons and
+  short-local-STT/long-ChatGPT modes. Keep Android0.2.0/default assistant unchanged.
+  Owner is departing: prepare/push for later manual GitPull; do NOT update/restart
+  vehicle or execute live driving commands. Remote voice-start button was only
+  proposed; existing remote targets comma, phone invocation bridge is not added.
+  MCP0.6.0 loads VOICE_RULES.md, adds separately consented carrot.drive and a
+  separate local stationary-issued grant. Old grants never expand. Clear current
+  commands avoid extra conversational confirmation; platform approvals remain.
+  Existing lane FSM owns motion with fresh state, BSD/geometry/torque/driver gates,
+  Tesla real signal acknowledgement; no synthesized physical/DM input. Speed_up
+  uses RES/+ handling, down subtracts an explicit amount, set preserves target;
+  active supported longitudinal control only, never engages lateral/control.
+  Single request, relay5s/local1s freshness, lane preparation3s, duplicate guard10s,
+  no replay after expiry/restart/uncertain feedback. Completion requires lane
+  crossing plus FSM finish; set-speed readback is not measured vehicle speed.
+  Missing result-file IO cannot restore a consumed rejection. Wakeable polling
+  reduces delivery wait, not ChatGPT latency. Fix0.5.1 strict MCP result rejecting
+  device step_note. PC new controller20/API49/MCP18/web8, isolated build/Ruff pass.
+  Linux Signal CI42202066904 passes1644/362subtests +131,40skips; Jetson CI42202066820
+  also passes. Full general build CI remains separate. Runtime owner hashes let
+  revocation cancel pending requests even after a web-server restart.
+  NAS0.6.0 built/started exit0 and public health/discovery verify new scope; owner's
+  driving grant has NOT been added and actual spoken road operation is untested.
+  Full parked device restart needed after GitPull, not web-only reload. No API/key
+  or APK change. KO/EN guides and Wiki describe experimental scope and setup.
+
+- On 2026-11-06, owner explicitly requests supported driving-setting edits while
+  moving. Supersedes the CarrotAssist onroad allowlist below: catalog edits may
+  prepare/commit onroad; only initial local permission needs parked/disengaged
+  state. Keep denied internal/driver-monitoring switches, scope/origin grants,
+  expiry, user confirmation, current-value/definition rechecks and readback/history.
+  Owner reports CruiseMaxVals0 250 ->240 incorrectly proposed241: min=1/unit=5
+  was mistakenly treated as a value lattice. Unit is a web button increment;
+  preserve any in-range explicit integer; round relative calculations to integers
+  (half away from zero), reject fractional absolute requests. MCP0.5.1 explains
+  this to ChatGPT. No APK change needed. Python21/MCP14/web4 and isolated build
+  pass; moving-state tests use fakes, not actual driving or live acceleration edits.
+
+- On 2026-11-06, owner authorizes CarrotAssist public beta with confirmed setting
+  changes, automatic update checks, KO/EN guides and Wiki. Android 0.2.0/code7
+  retains prototype signing identity; release APK SHA256
+  c05c86f2312aa46aaa05bd1ea73f39066c6a7cc49ace88fd3399491bbf433968.
+  Release carrot-assist-v0.2.0 and separate carrot-assist-updates/update.json
+  are published without changing the repository's general Latest release.
+  NAS carrot-mcp 0.5.0/account OAuth adds carrot.settings only by new consent;
+  existing permissions never expand silently. Hashed local origin-bound grant,
+  single-setting read, 60s proposal, explicit confirmation, fresh state and value
+  recheck, readback and voice-source history guard writes. Only display/HUD
+  brightness and alert volume may change onroad; other supported integer settings
+  need fresh stationary/disengaged state. No real-time vehicle commands or logs.
+  Owner's parked device verified through ChatGPT tools: brightness90 ->95 ->90;
+  direct Params readback agrees. Phone updated via GitHub verifier/Android installer
+  code6 ->7; pairing and local grant survive. Tool refresh after reauthorization
+  exposes all11 tools. Actual voice-overlay navigation was tested separately;
+  setting writes used ChatGPT text tools, not a spoken-road acceptance test.
+  Fix already-open setting rows/cache after applied readback. Python41, MCP14,
+  Android discovery33/update15, focused web15 and docs validation pass.
+  Free ChatGPT unverified; Gemini custom MCP US/English restrictions and Live
+  unverified, no Gemini/legacy Assistant tool integration. No AI API/key on relay;
+  each user's ChatGPT allowance applies. Hundreds of clients/load unverified.
+  See docs/user/{ko,en}/carrot-assist.md and Wiki Guide-CarrotAssist. Preserve
+  private signing material outside Git. Web UI setup uses connection-page/copy
+  buttons and actual menu names instead of unexplained OAuth instructions.
+  Post-update repeated test applied95; ChatGPT tool-approval delays expired
+  successive restoration proposals, then the owner took a phone call. Restore90
+  through the normal local param_set API after fresh parked check; direct Params
+  verifies90. Do not claim the second restoration completed through ChatGPT or
+  that changed-row display was physically verified after the last cache fix.
+  ChatGPT may require Allow once in addition to conversational confirmation;
+  guides disclose this, and fully hands-free changes remain unverified.
+
+- On 2026-11-06, owner reports eGPU Light/N16 first-inference AMD-7/hang becoming
+  permanently rejected. Prior committed code reproduces next-boot denial;
+  pinned N16/Flip/Light/Light2 runtime archives hash-check and map-7 to USB wait
+  timeout. Recognize exact terminal-7/hang only for those runtimes, retain this
+  boot quarantine/internal fallback, allow matching previous-boot verified load.
+  No expansion of live recovery. Migrate old reports, keep diagnostics and all
+  hash/contract/output/smoke gates. Web KO/EN shows cause and permits offroad-only
+  one-shot next-boot verification, bound to model/runtime/failure/boot identity;
+  never directly deletes markers, starts GPU or reboots. Desktop416+web19 pass,
+  isolated web build/Ruff pass. No vehicle/CAN/model/Jetson writes. Initial fault
+  and physical cure unverified; reporter JSONs not supplied. GitPull/full comma
+  reboot. See docs/egpu_rejection_recovery_20261106.md.
+
+- On 2026-11-05, owner reports ATC indicator-associated warnings while driving,
+  then explicitly requests PC-only fix/test/push and will apply after exercise.
+  Full-cereal NAS rlog 11a6/30: receiver unavailable/lease_lost at19:47:56.001,
+  model IPC timeout/local fallback167ms later and commIssue soft-disable.
+  Both reported indicators are off at failure; this does not prove a turn-on
+  trigger or why receiver availability dropped. Sender synchronously waited
+  for policy-child exit on the model bridge thread. Reap only that source in
+  background after immediate IPC closure; retain synchronous CAN-worker close,
+  lease grace and expiry. Gate fresh sources until reaping ends, revoke commands
+  on adapter-generation change, log receiver state/error on loss. Real desktop
+  child with400ms shutdown reproduces old405ms blocking; new lifecycle tests
+  cover loss/change/close, recovery without command replay and CAN close.
+  Indicator suites606pass/7Linux-only skips; Ruff passes. No vehicle write,
+  restart, firmware or model change. Initial receiver failure and road cure
+  remain unverified; user must GitPull/full reboot to load the comma bridge fix.
+
+- On 2026-11-05, owner requests 0.20s coherent-vision replacement while a
+  healthy measured front radar lead remains, following ID4 29e/46 on contributor
+  model_selector-ha c6eb3b36a. Short visual range/speed outliers replace measured
+  281 and drive recorded acceleration dips. Retain current measured values;
+  reset confirmation on visual kinematic jumps, revoke on invalid radar/path,
+  count model timestamps (not repeated wakeups), preserve new radar matches
+  and independent stationary contradictions. No parameter/model/device change.
+  New log-derived case passes modes1/2/3; all104logs/504labels have no new failures.
+  Existing expectation failures11/10/13, mode3 predecel1 and208unverified remain.
+  Full124489frame audit changes677 vision-only L1 frames in33logs to radar,
+  no L2/risk identity changes. Local1847pass/4skip and Ruff pass. Actual road
+  acceleration untested; NAS graph retains recorded commands. See
+  docs/id4_vision_transition_20261105.md; private evidence under .analysis/archive.
+
+- On 2026-11-05, owner requests Light speed 2 b92fc482 as an additional shared
+  eGPU/Jetson choice, keeping old Light speed. Official PKL b4dead3e/767228907B,
+  ONNX909a1400/768749892B, checkpoint ea2f516f match all metadata; NOO unsupported.
+  Pin isolated tinygrad ec91b74/runtime96c6ecc9; upstream includes cast-zero USB
+  wrap rule, so retain old backport only for d39227. Add exact-runtime cooperative
+  USB wait/captured copies and native compatibility CI. Signed selected-model
+  host delivery required. Parked physical testing authorized before19:40; do not
+  treat desktop metadata/CI as road acceptance. See docs/light_speed_2_model_20261105.md.
+  Published9faaee0ab9; native Light2 five/Jetson2364 checks pass. Owner car retained
+  concurrent CAN-task f8e02ee19d, normal comma reboot selects Light2. ONNX downloaded
+  on Jetson and reboot requested; owner then explicitly PAUSED Jetson work due to
+  CAN-task overlap. No further device changes/tests until resumed. Automatic boot
+  update may proceed; actual Light2 engine/inference/road readiness unverified.
+  Owner then resumed. Auto-install7c6be06a/ONNX909a1400/FP16 engine matches pin,
+  built47s. Actual commaf8e02ee19d boot selectsLight2, snapshotfalse/P/inactive.
+  120s/2405frames: mean37.569/P9941.971/max44.868ms, zero>50execution/gaps/invalid
+  pose/alerts/linkloss. N16 prior mean40.662; CAN cadence also changed, not isolated
+  A/B. Loop max61.614ms remains; no absolute50ms or road/eGPUhardware guarantee.
+  DATA4GBfree. FullCI4Bluetooth import failures match pre-model895905 baseline.
+  Light2 remains selected/running; no additional reboot after resume.
+
+
+- On 2026-11-05, owner requests MKS CANable 2.0 support alongside PEAK and S3,
+  first-ready output selection, and beginner PC/Jetson firmware/photo guides.
+  Standard G431 board flashed/readback-verified carrot-b1-slcan-2; exact image
+  aa59e9f7733d3398537d1a7d7c07cdd5e17edc91ac689fd7e0bd738dad03cd26.
+  Fix upstream silent-open override, disable automatic retries, clear pending TX
+  on close, and report actual sequence/TXBTO/protocol-error/cancellation results.
+  Host retries only confirmed no-error cancellations within 15ms/eight attempts.
+  Native Park test: left/right each exactly three flashes, comma and 0x413 agree;
+  13 completed TX frames, no opposite lamp. No long-duration driving proof.
+  Shared comma lease selects first ready S3/USB, retains working owner, expires
+  old commands before failover; enrollment alone never reserves S3 priority.
+  Native ownership/SLCAN21 pass, desktop88 pass/7 native-only skips; staged
+  production discovery receives matching CAN without sending. Installer backs up
+  full internal flash then programs/readback-compares; never writes options/OTP.
+  Standard MKS V2.0 only; Pro/V1/other MCU unverified. Windows physical DFU flash
+  untested. User explicitly authorizes KO/EN photo guides, Wiki and release kits.
+  See docs/user/ko/indicator-adapters.md and tools/jetlink/canable/README.md.
+  Live installation exposed bridge status cadence (1Hz inference/2s idle) versus
+  the new 500ms lease: source restarted repeatedly despite healthy CAN. Request
+  telemetry on each inference with an indicator channel, poll idle at200ms and
+  keep local receive timeout100ms; retain 500ms stale revocation. Production-loop
+  cadence regressions3pass. No firmware change is needed for this correction.
+  Public release carrot-canable-v2 and clickable KO/EN Wiki adapter pages are
+  published; five downloaded assets hash-match, public photo/link navigation and
+  mobile offline guide checked. Windows GUI/no-device checks exercised; no PC DFU
+  hardware attached. Park-guarded comma GitPull/reboot installed f8e02ee19d; avoid
+  only killing Python child processes after source changes because manager
+  preimports their modules. Concurrent owner-authorized Light2 work rebooted
+  both devices; preserve its selection. Final native observation: CANable owns
+  all391 samples across20s, same lease token, fresh CAN/ready/no error. Jetson
+  then runs Light2 source7c6be06a5b (includes CANable), not the earlier c70 pin.
+  This final check is passive; the earlier direct Park left/right test remains
+  the physical lamp proof, not a new end-to-end Bluetooth-button test.
+
+- On 2026-11-05, owner requests exact g1 handoff rejection on screen and logs.
+  Add adb-handoff reason codes and bounded observations for first failed guard,
+  pre-write recheck, locks and unbind IO. Setup always invokes the existing
+  permission-checking helper for g1, including missing/unsafe marker diagnostics.
+  Shell status/stderr and daemon errors carry the cause to Carrot Web KO/EN;
+  label becomes comma USB setup blocked. Automatic NCM fallback retains the
+  cause at the start of its bounded error. Default opt-in/offroad/identity and
+  ownership checks still govern release. No marker enrollment/live device writes.
+  See docs/jetlink_konik_usb_recognition_20261023.md diagnostic table.
+
+- On 2026-11-05, owner requests review/integration of PR570/571. PR570 final
+  5f6712c422 doubles Ray command increment above neutral264/497; cap0.70 maps
+  795/1572 with matching explicit Panda bounds. Raw slew increases too.
+  Eligibility/sensor calibration retain prior definitions; contributor reports
+  Ray operation, no local physical acceleration proof. PR571980f2f9413 selects
+  temporary geocoding; supplement with RAM-only active destination, DONT_LOG,
+  manager-start/offroad cleanup and CLI replacement. Fix arrival cleanup omission
+  (original production method fails regression); local221vehicle+29nav pass.
+  Ordinary GitPull/restart includes Panda rebuild. No live writes/CAN/reboot.
+
+
+- On 2026-11-04, owner requests USB wrap correction and curve replay comparison.
+  Backport tinygrad42ea17d1 cast-zero USB memset rule before loading only exact
+  d39227/cb9bf2cf Light runtime; older N16/Flip ranged-store paths untouched.
+  New Light AMD warp cache tag; validation receipts hash hooks. No model/runtime
+  replacement or claimed hardware cure. 26hash-checked rlogs346631805B give
+  30284model/30276usable/25243moving frames; ALL lack yawStd/raw predictions.
+  Current ceiling vs ssh f3bf59fd negative-cap rates6.92/7.01%; assumed sigma
+  .03rad/s gives11.29/11.87, NOT measured uncertainty or braking. Corpus includes
+  retiredMD4798frames and JoiningModel without exact recorded external identity.
+  Some near-straight extra limits and nonmonotonic tighter-curve gate found.
+  Live curve policy unchanged; publish existing orientationRate stds for future
+  logs only. Desktop128 plus pinned matcher pass; eGPU41834213643 passes505+57,
+  native old3/2skip and Light5 plusWeb. Jetson41834213685 passes5+2330/56skip
+  and supporting suites/Windows; docs pass. Physical USB wrap untested.
+  No live writes/CAN/Jetson bundle. See docs/usb_wrap_curve_comparison_20261104.md.
+
+
+- On 2026-11-04, owner reports unintended steering with AutoEngage0 after the
+  Nov3 isolated stock MAIN change. Confirmed source chain OEM MainMode_ACC ->
+  main_enabled -> cruiseState.available rising -> VCruiseCarrot latEnabled ->
+  AlwaysLateral. Nov3 packet tests missed this driver-intent feedback path.
+  CameraSCC+openpilotLong now excludes OEM MAIN feedback from driver's main state;
+  AutoEngage init and physical MAIN/RES/SET still own that state. LFA off survives
+  OEM transitions. Generic cruise/controller/Panda and stock-long paths unchanged.
+  Production helper+full cruise+lateral-gate regression old7fail/2pass, new9pass;
+  combined368 desktop pass. UTF8 required for pre-existing VW metadata reads on
+  Windows. No live vehicle writes or individual complaint log validation.
+  GitPull/comma restart. See docs/ev5_cluster_corner_display.md correction.
+
+
 - On 2026-11-03, owner requests PR569 Comma Pedal review/integration with emphasis
   on unsupported vehicles. Merge head01b8bf5d into currentWip36fbbbae, preserving
   CameraSCC MAIN fix. DefaultOFF, explicit RayEV+CC_ONLY classic/nonlegacy/noncamera
