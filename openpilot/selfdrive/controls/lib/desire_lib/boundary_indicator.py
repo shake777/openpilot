@@ -4,16 +4,16 @@ This observes a manual maneuver; it never supplies a lane-change desire.
 """
 
 import math
-from openpilot.selfdrive.controls.lib.desire_lib.boundary_lane import adjacent_lane
+from openpilot.selfdrive.controls.lib.desire_lib.boundary_lane import manual_boundary
 
 
 TRACK_SEC = 1.0  # Brief confidence loss during a continuous driver crossing.
-QUIET_SEC = 3.0  # Earliest new request; extinction is required independently.
+QUIET_SEC = 3.0  # Ordinary rearm; short abandoned approaches have a bounded exception.
 ISOLATE_SEC = 12.0  # Keep delayed lamp feedback out of automatic steering.
 
 
 class BoundaryIndicator:
-  def __init__(self, journal=None, *, lane_admission=adjacent_lane, minimum_speed=30 / 3.6):
+  def __init__(self, journal=None, *, lane_admission=manual_boundary, minimum_speed=30 / 3.6):
     self.lane_admission = lane_admission
     self.minimum_speed = minimum_speed
     self.journal = journal if isinstance(journal, dict) else {}
@@ -32,6 +32,7 @@ class BoundaryIndicator:
     self.dark_since = None
     self.request_direction = 0
     self.request_time = 0.0
+    self.short_attempt_end = None
 
   def _reset_geometry(self):
     self.previous = None
@@ -42,6 +43,7 @@ class BoundaryIndicator:
     self.lane_since = [None, None]
 
   def own(self, now, direction):
+    self.short_attempt_end = None
     self.blocked |= direction
     self.block_until = max(self.block_until, now + QUIET_SEC)
     self.isolate_until = max(self.isolate_until, now + ISOLATE_SEC)
@@ -69,6 +71,7 @@ class BoundaryIndicator:
     if self.blocked and now >= self.isolate_until and dark:
       self.blocked = 0
     if not enabled or not valid or busy:
+      self.short_attempt_end = None
       self.request_direction = 0
       self._reset_geometry()
       return
@@ -84,10 +87,14 @@ class BoundaryIndicator:
       or not math.isfinite(cs.steeringTorque)
       or cs.vEgo < self.minimum_speed
     ):
+      self.short_attempt_end = None
       self.request_direction = 0
       self._reset_geometry()
       return
-    if now < self.block_until or (self.blocked and not dark):
+    short = self.short_attempt_end
+    opposite_attempt = (short is not None and 1. <= now-short[0] <= 3. and dark and cs.steeringPressed and
+                        cs.steeringTorque * (1 if short[1] == 1 else -1) < 0)
+    if (now < self.block_until and not opposite_attempt) or (self.blocked and not dark):
       self._reset_geometry()
       # Preserve the same fresh edge after torque release, never replay a timer.
       if not 0 <= now - self.request_time < .2 or not self.lane_admission(cs, md, self.request_direction, now):
@@ -98,9 +105,14 @@ class BoundaryIndicator:
       left, right = md.laneLines[1].y[0], md.laneLines[2].y[0]
       probs = (md.laneLineProbs[1], md.laneLineProbs[2])
       if (
-        not all(math.isfinite(x) for x in (left, right, *probs, cs.steeringTorque)) or not left < 0 < right or not 2.5 < right - left < 4.8
+        not all(math.isfinite(x) for x in (left, right, *probs, cs.steeringTorque)) or not left < 0 < right
       ):
         self._reset_geometry()
+        return
+      if not 2.5 < right - left < 4.8:
+        # Invalid width cannot establish a new approach. An existing episode
+        # retains its last sample, still bounded by the 150 ms continuity check.
+        self.lane_since = [None, None]
         return
       for i, probability in enumerate(probs):
         if probability >= 0.10:
@@ -115,9 +127,25 @@ class BoundaryIndicator:
         self._reset_geometry()
         return
       if max(abs(y[i] - prev_y[i]) for i in (0, 1)) > 0.4:
-        self.relabel_until = now + 2.0
-        self._reset_geometry()
-        return
+        # During an established driver approach both boundaries can advance
+        # together as markings reappear beyond an intersection.
+        episode = self.episode
+        side = episode['direction'] - 1 if episode else 0
+        # Ignore a brief jump of only the far boundary. Keep the last accepted
+        # sample so its 150 ms age still bounds recovery, and do not emit here.
+        if (episode is not None and now - episode['intent'] <= .5 and
+            self.lane_admission(cs, md, side + 1, now) and
+            abs(prev_y[side] - y[side]) <= .1 and abs(prev_y[1-side] - y[1-side]) > .4):
+          self.previous = old
+          return
+        paired_approach = (episode is not None and now - episode['intent'] <= .5 and
+                           self.lane_admission(cs, md, side + 1, now) and
+                           0 < prev_y[side] - y[side] <= .8 and
+                           abs(sum(y) - sum(prev_y)) < .2)
+        if not paired_approach:
+          self.relabel_until = now + 2.0
+          self._reset_geometry()
+          return
       self.rates = [0.5 * self.rates[i] + 0.5 * (prev_y[i] - y[i]) / dt for i in (0, 1)]
       for i in (0, 1):
         self.lane_since[i] = (now if self.lane_since[i] is None else self.lane_since[i]) if self.lane_admission(cs, md, i + 1, now) else None
@@ -130,7 +158,7 @@ class BoundaryIndicator:
       if (self.episode is None and confirmed and self.lane_since[confirmed - 1] is not None and now - self.lane_since[confirmed - 1] >= .2 and
           self.confident[confirmed - 1] is not None and 0 <= now-self.confident[confirmed - 1] <= TRACK_SEC):
         self.episode = {'direction':confirmed, 'start':now, 'intent':now, 'initial':y[confirmed - 1],
-                        'minimum':y[confirmed - 1], 'approach':now}
+                        'minimum':y[confirmed - 1], 'approach':now, 'retreat_since':None}
       episode = self.episode
       if episode is None:
         return
@@ -141,12 +169,16 @@ class BoundaryIndicator:
       if self.rates[i] > .1:
         episode['approach'] = now
       episode['minimum'] = min(episode['minimum'], y[i])
+      retreating = y[i] - episode['minimum'] > .15
+      episode['retreat_since'] = (now if episode['retreat_since'] is None else episode['retreat_since']) if retreating else None
       # A brief release or countersteer does not erase continued approach. Actual
       # retreat, stalled approach, stale intent or lost adjacent lane does.
       if (self.lane_since[i] is None or now - episode['intent'] > 1.5 or now - episode['start'] > 4 or
-          now - episode['approach'] > .3 or y[i] - episode['minimum'] > .15):
+          now - episode['approach'] > .3 or (episode['retreat_since'] is not None and now - episode['retreat_since'] >= .15)):
         self.episode = None
         self.relabel_until = now + .2
+        return
+      if retreating:
         return
       # The crossed boundary must have been observed recently. The opposite
       # boundary supplies geometric consistency, not a second confidence veto.
